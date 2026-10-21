@@ -116,6 +116,37 @@ keep working.
 - **Fallback:** if the spike shows a blocker, Option A is still available, and
   Option B's alias work is not wasted: A can start module by module from it.
 
+#### Spike result (Debian bookworm, aarch64 container, Rust 1.99, tauri 2.11.5 / tauri-runtime 2.11.3)
+
+The spike used a minimal crate with `tauri = { default-features = false, features = ["test"] }`
+and versions pinned to this repo's lockfile. It built a mock app with managed
+state and a `"main"` mock webview, then sent commands through `Webview::on_message`.
+
+- **Works headless with no display** (`DISPLAY`/`WAYLAND_DISPLAY` unset):
+  - `generate_handler!` dispatch, including async commands, `State<T>`,
+    `AppHandle<MockRuntime>`, `WebviewWindow` label (`"main"`), errors, and
+    "Command … not found".
+  - camelCase → snake_case argument renaming.
+  - Both `emit()` and `emit_to("main", …)` reach `listen_any`.
+  - 8 concurrent calls from separate threads.
+- **Build time:** `tauri-runtime` depends on `webkit2gtk` on Linux
+  **unconditionally** (its public types mention `webkit2gtk::WebView`). Building
+  therefore needs `libgtk-3-dev` **and `libwebkit2gtk-4.1-dev`** headers, even
+  with `wry` off.
+- **Run time:** Rust links with `--as-needed`, so the binary's `NEEDED` list is
+  only GLib/GObject/GIO, GTK 3/GDK, Pango, Cairo, gdk-pixbuf and libc. **No
+  WebKit at run time.** On `debian:bookworm-slim`, `libgtk-3-0` adds ~180 MB.
+- **The mock context has no bundle identifier,** so `app_data_dir()` resolves
+  to `~/.local/share/`. Headless must set the identifier to
+  `ai.pandacode.desktop` (or pass `--data-dir`).
+- **Version skew breaks the build:** a fresh resolve picks `tauri-runtime`
+  2.12, which does not compile against `tauri` 2.11.5. The repo's `Cargo.lock`
+  already pins compatible versions; keep it.
+
+Practical consequence: build `pandacode-core` in a Docker builder stage (or CI)
+that has the dev headers, and ship a runtime image or host with only
+`libgtk-3-0`. X itself never needs WebKitGTK.
+
 ### Cargo layout (both options)
 
 - `default = ["desktop"]`.
