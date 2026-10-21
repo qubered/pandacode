@@ -1,8 +1,80 @@
 # Remote core: headless backend, remote frontend
 
-Status: **Phase 0 (orientation).** Nothing here is built yet. This document records
-what the codebase looks like today and proposes how to add a third run mode,
-*remote*, beside native (Tauri) and preview (browser fixtures).
+Status: **Phases 1–3 are built** (option B). Phase 4 is verified in a Linux
+container and against a local core; an agent turn with approvals still needs
+checking on a host with a logged-in coding CLI (see "Verification").
+Remote mode is a third run mode, beside native (Tauri) and preview (browser fixtures).
+
+## Running it
+
+On the server X:
+
+1. Build the binary, on any machine with Docker:
+   ```bash
+   docker build -f docker/pandacode-core.Dockerfile --platform linux/amd64 --target export --output dist-core .
+   ```
+   Use `linux/arm64` for an ARM server. This needs glibc 2.35 or newer
+   (Ubuntu 22.04+, Debian 12+).
+2. On X, install the runtime libraries and copy the binary over:
+   ```bash
+   sudo apt install libgtk-3-0 git
+   ```
+   You also need the coding CLIs you use (logged in as the same user).
+3. Start the core on the tailnet address:
+   ```bash
+   ./pandacode-core --bind "$(tailscale ip -4)" --port 7878
+   ```
+   - Data defaults to `~/.local/share/ai.pandacode.desktop` (change it with
+     `--data-dir`).
+   - Secrets go in `secrets.json` there, with mode 0600.
+   - Run it under systemd or tmux so it outlives your SSH session. On SIGTERM it
+     stops agents cleanly.
+
+On the laptop Y:
+
+1. Serve the frontend: `npm run dev` (it serves `http://127.0.0.1:1420`).
+   `npm run build && npm run preview` serves the built frontend instead.
+2. Open `http://127.0.0.1:1420/?core=ws://<X-tailnet-ip>:7878`.
+
+The core accepts browser pages only from loopback origins, which covers the
+frontend served locally on Y. To serve the frontend from another host, start the
+core with `--allow-origin http://that-host:port`. This is not a login. It stops a
+website open in your browser from driving the core: browsers apply no CORS to
+WebSockets, and the browser sits inside the tailnet.
+
+For a local trial on one machine, use `npm run core -- --port 7878` and
+`?core=ws://127.0.0.1:7878`.
+
+## Verification (2026-10-22)
+
+**Automated tests:**
+- `npm run test:rust`: 983 passed.
+- `npm run test:rust:headless`: 948 passed. This includes:
+  - WebSocket dispatch, typed errors, headless stubs, Origin checks and event
+    filtering.
+  - Terminal streaming and re-attachment after a reconnect.
+  - A check that every emitted or subscribed channel is forwarded.
+- `npm test`: 108 passed, including the transport's reconnect and no-replay
+  tests.
+- `npx tsc --noEmit` and `npm run build` are clean.
+- The Playwright suites for attachments, moodboards, provider settings, settings
+  and layout pass, so the preview path is intact.
+
+**Linux core (`debian:bookworm-slim`, only `libgtk-3-0` and `git`, no display):**
+- WebKit: zero packages installed, and none in the binary's `NEEDED` list.
+- In the browser, against this core:
+  - The remote picker browsed `/root` and opened a project.
+  - A terminal ran `uname`, reporting `Linux aarch64`.
+  - After a page reload, the reopened terminal adopted the same shell. It
+    showed output printed while no page was attached.
+
+**Agent turn (local core on macOS):**
+- **Working:** a prompt reached the Claude Code and Codex CLIs, and their
+  replies streamed back as `agent-event`s, including errors and a provider
+  handoff.
+- **Not verified:** a completed reply and the approval round trip. This Mac's
+  Claude Code isn't logged in, and its Codex CLI's models are refused for the
+  account. Re-check both on X.
 
 Goal: run PandaCode's Rust core headless on a server X (no webview, no display),
 run the frontend on a laptop Y, and connect Y to X over a WebSocket on a

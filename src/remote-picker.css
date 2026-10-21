@@ -9,7 +9,7 @@ dialog.remote-picker::backdrop{background:var(--scrim)}
 .remote-picker-path{display:flex;gap:6px;align-items:center}
 .remote-picker-path input{flex:1;min-width:0;font-family:var(--mono,ui-monospace,monospace);font-size:.8rem;padding:7px 9px;border:1px solid var(--glass-line);border-radius:4px;color:var(--text)}
 .remote-picker-list{margin-top:8px;height:min(46vh,360px);overflow:auto;border:1px solid var(--glass-line);border-radius:4px;background:var(--glass-fill);padding:3px}
-.remote-picker-row{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:3px;background:none;color:var(--text);font-size:.84rem;text-align:left;cursor:default}
+.remote-picker-row{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:3px;background:none;color:var(--text);font-size:.84rem;text-align:left;cursor:default}
 .remote-picker-row span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .remote-picker-row .icon{width:15px;height:15px;flex-shrink:0;color:var(--muted)}
 .remote-picker-row:hover:not(:disabled){background:var(--glass-fill-hover)}
