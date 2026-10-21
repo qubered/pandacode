@@ -65,6 +65,31 @@ fn local_answer(command: &str) -> Option<Value> {
 pub struct Options {
     pub address: SocketAddr,
     pub data_dir: Option<PathBuf>,
+    /// Extra page origins (such as `http://laptop:1420`) allowed to connect.
+    pub allowed_origins: Vec<String>,
+}
+
+/// Which browser pages may connect. There is no login: the tailnet is the boundary.
+/// But any page open in a browser inside that boundary can open a WebSocket to the
+/// core, and browsers apply no CORS to WebSockets. So a connection that carries an
+/// `Origin` (every browser's does) must come from a frontend on loopback or from an
+/// origin the operator listed. Clients without an `Origin` (scripts, tests) pass.
+#[derive(Clone, Default)]
+pub(crate) struct Origins(Arc<Vec<String>>);
+impl Origins {
+    pub(crate) fn new(extra: Vec<String>) -> Self {
+        Self(Arc::new(extra.into_iter().map(|o| o.trim_end_matches('/').to_ascii_lowercase()).collect()))
+    }
+    fn allows(&self, origin: Option<&str>) -> bool {
+        let Some(origin) = origin else { return true };
+        let origin = origin.trim_end_matches('/').to_ascii_lowercase();
+        if self.0.iter().any(|allowed| *allowed == origin) {
+            return true;
+        }
+        let Ok(url) = tauri::Url::parse(&origin) else { return false };
+        matches!(url.scheme(), "http" | "https")
+            && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    }
 }
 
 pub(crate) struct Core {
@@ -100,6 +125,7 @@ pub(crate) fn start(data_dir: Option<PathBuf>) -> Result<Core, String> {
 /// Starts the core and serves clients until SIGINT/SIGTERM.
 pub fn serve(options: Options) -> Result<(), String> {
     let Core { app, webview, events, dir } = start(options.data_dir)?;
+    let origins = Origins::new(options.allowed_origins);
     let handle = app.handle().clone();
     eprintln!("PandaCode core: data in {}", dir.display());
     tauri::async_runtime::block_on(async move {
@@ -108,7 +134,7 @@ pub fn serve(options: Options) -> Result<(), String> {
             .map_err(|e| format!("Could not listen on {}: {e}", options.address))?;
         eprintln!("PandaCode core: listening on ws://{}", listener.local_addr().map_err(|e| e.to_string())?);
         tokio::select! {
-            result = accept(listener, webview, events) => result,
+            result = accept(listener, webview, events, origins) => result,
             _ = terminated() => {
                 eprintln!("PandaCode core: stopping agents…");
                 if crate::begin_shutdown(&handle) {
@@ -145,14 +171,16 @@ pub(crate) async fn accept(
     listener: TcpListener,
     webview: Webview<Rt>,
     events: broadcast::Sender<(&'static str, Arc<str>)>,
+    origins: Origins,
 ) -> Result<(), String> {
     loop {
         let (stream, peer) = listener.accept().await.map_err(|e| e.to_string())?;
         let webview = webview.clone();
         let events = events.subscribe();
+        let origins = origins.clone();
         tauri::async_runtime::spawn(async move {
             eprintln!("PandaCode core: {peer} connected");
-            if let Err(error) = client(stream, webview, events).await {
+            if let Err(error) = client(stream, webview, events, origins).await {
                 eprintln!("PandaCode core: {peer}: {error}");
             }
             eprintln!("PandaCode core: {peer} disconnected");
@@ -164,8 +192,19 @@ async fn client(
     stream: TcpStream,
     webview: Webview<Rt>,
     mut events: broadcast::Receiver<(&'static str, Arc<str>)>,
+    origins: Origins,
 ) -> Result<(), String> {
-    let socket = tokio_tungstenite::accept_async(stream).await.map_err(|e| e.to_string())?;
+    use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+    let check = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
+        let origin = request.headers().get("origin").map(|value| value.to_str().unwrap_or("invalid"));
+        if origins.allows(origin) {
+            return Ok(response);
+        }
+        let mut refusal = ErrorResponse::new(Some(format!("Origin {} may not use this core. Start it with --allow-origin.", origin.unwrap_or_default())));
+        *refusal.status_mut() = tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN;
+        Err(refusal)
+    };
+    let socket = tokio_tungstenite::accept_hdr_async(stream, check).await.map_err(|e| e.to_string())?;
     let (mut sink, mut incoming) = socket.split();
     let (replies, mut outgoing) = mpsc::unbounded_channel::<String>();
     let mut subscribed = HashSet::<String>::new();
@@ -328,7 +367,16 @@ mod tests {
         tauri::async_runtime::block_on(async move {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("ws://{}", listener.local_addr().unwrap());
-            tauri::async_runtime::spawn(accept(listener, webview, events));
+            tauri::async_runtime::spawn(accept(listener, webview, events, Origins::new(vec!["http://laptop:1420".into()])));
+            // Browsers always send an Origin: a page elsewhere may not drive the core.
+            let mut foreign = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(url.as_str()).unwrap();
+            foreign.headers_mut().insert("origin", "https://evil.example".parse().unwrap());
+            assert!(connect_async(foreign).await.is_err());
+            for allowed in ["http://127.0.0.1:1420", "http://localhost:5173", "http://laptop:1420"] {
+                let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(url.as_str()).unwrap();
+                request.headers_mut().insert("origin", allowed.parse().unwrap());
+                assert!(connect_async(request).await.is_ok(), "{allowed}");
+            }
             let (mut client, _) = connect_async(&url).await.unwrap();
             let mut seen = Vec::new();
 

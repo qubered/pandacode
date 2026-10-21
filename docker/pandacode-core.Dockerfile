@@ -19,6 +19,8 @@ RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-too
 ENV PATH=/root/.cargo/bin:$PATH
 WORKDIR /src
 COPY src-tauri src-tauri
+# The bots web chat serves the frontend's Markdown parser (bots/channels/http.rs).
+COPY src/vendor src/vendor
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/src/src-tauri/target \
     cargo build --release --locked --manifest-path src-tauri/Cargo.toml \

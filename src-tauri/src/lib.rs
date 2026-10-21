@@ -34,6 +34,7 @@ mod local_servers;
 mod message_queue;
 mod moodboards;
 mod prompt_attachments;
+mod remote_files;
 #[cfg(feature = "headless")]
 pub mod remote_core;
 #[cfg(feature = "desktop")]
@@ -3211,6 +3212,8 @@ pub(crate) fn invoke_handler(invoke: tauri::ipc::Invoke<Rt>) -> bool {
         get_metrics,
         list_local_servers,
         core_info,
+        remote_files::fs_home,
+        remote_files::fs_list,
         jev::jev_configuration,
         jev::jev_save_configuration,
         jev::jev_doctor,
