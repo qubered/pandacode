@@ -87,7 +87,7 @@ pub(crate) fn visible(text: &str) -> String {
     text[..cut].trim().to_owned()
 }
 
-fn authorized(app: &tauri::AppHandle, channel_id: &str, request: &Request) -> Option<Channel> {
+fn authorized(app: &crate::AppHandle, channel_id: &str, request: &Request) -> Option<Channel> {
     let state = app.state::<AppState>();
     let store = state.store.lock().ok()?;
     let channel = super::get(&store, channel_id).ok().filter(|c| c.kind == "web" && c.enabled)?;
@@ -95,7 +95,7 @@ fn authorized(app: &tauri::AppHandle, channel_id: &str, request: &Request) -> Op
     request.bearer().is_some_and(|given| same(given, &token)).then_some(channel)
 }
 
-fn history(app: &tauri::AppHandle, channel: &Channel) -> Value {
+fn history(app: &crate::AppHandle, channel: &Channel) -> Value {
     let state = app.state::<AppState>();
     let Ok(store) = state.store.lock() else { return json!({"messages": [], "busy": false}) };
     let bot = crate::bots::get(&store, &channel.bot_id).ok();
@@ -120,7 +120,7 @@ fn history(app: &tauri::AppHandle, channel: &Channel) -> Value {
     })
 }
 
-fn busy(app: &tauri::AppHandle, channel: &Channel) -> bool {
+fn busy(app: &crate::AppHandle, channel: &Channel) -> bool {
     let state = app.state::<AppState>();
     let session: Option<String> = state.store.lock().ok().and_then(|store| {
         store
@@ -131,7 +131,7 @@ fn busy(app: &tauri::AppHandle, channel: &Channel) -> bool {
     session.is_some_and(|session| state.agents.lock().map(|agents| agents.contains_key(&session)).unwrap_or(false))
 }
 
-async fn events(app: &tauri::AppHandle, channel: &Channel, after: u64) -> Value {
+async fn events(app: &crate::AppHandle, channel: &Channel, after: u64) -> Value {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
     let was_busy = busy(app, channel);
     loop {
@@ -152,7 +152,7 @@ async fn events(app: &tauri::AppHandle, channel: &Channel, after: u64) -> Value 
     }
 }
 
-pub(crate) async fn api(app: &tauri::AppHandle, channel_id: &str, action: &str, request: &Request) -> Response {
+pub(crate) async fn api(app: &crate::AppHandle, channel_id: &str, action: &str, request: &Request) -> Response {
     let Some(channel) = authorized(app, channel_id, request) else { return Response::json(401, &json!({"error": "This link is no longer valid. Copy a fresh one from PandaCode."})) };
     // Other host names mean a tunnel or a rebound domain; allow them only when the owner turned on remote access.
     if !request.loopback_host() && channel.config["remote"].as_bool() != Some(true) {

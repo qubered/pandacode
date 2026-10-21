@@ -484,7 +484,7 @@ pub struct BotDetail {
     server_port: u16,
 }
 
-fn guard_main(window: &tauri::WebviewWindow) -> Result<()> {
+fn guard_main(window: &crate::WebviewWindow) -> Result<()> {
     if window.label() != "main" {
         return Err("Bots are managed from the main window.".into());
     }
@@ -558,7 +558,7 @@ pub async fn bots_list(state: State<'_, AppState>) -> Result<Vec<BotSummary>> {
 
 /// The bot's conversation in this app, created on first use, so the sidebar can open it.
 #[tauri::command]
-pub async fn bot_desktop_thread(app: tauri::AppHandle, state: State<'_, AppState>, bot_id: String) -> Result<String> {
+pub async fn bot_desktop_thread(app: crate::AppHandle, state: State<'_, AppState>, bot_id: String) -> Result<String> {
     let (session, created) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let bot = get(&store, &bot_id)?;
@@ -587,7 +587,7 @@ pub async fn bot_detail(state: State<'_, AppState>, bot_id: String) -> Result<Bo
 }
 
 #[tauri::command]
-pub async fn bot_create(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, input: BotInput) -> Result<Bot> {
+pub async fn bot_create(app: crate::AppHandle, window: crate::WebviewWindow, state: State<'_, AppState>, input: BotInput) -> Result<Bot> {
     guard_main(&window)?;
     let bot = create(&*state.store.lock().map_err(|e| e.to_string())?, &input, &workspace_root())?;
     let _ = app.emit("bots-changed", ());
@@ -595,7 +595,7 @@ pub async fn bot_create(app: tauri::AppHandle, window: tauri::WebviewWindow, sta
 }
 
 #[tauri::command]
-pub async fn bot_update(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, bot_id: String, input: BotInput) -> Result<Bot> {
+pub async fn bot_update(app: crate::AppHandle, window: crate::WebviewWindow, state: State<'_, AppState>, bot_id: String, input: BotInput) -> Result<Bot> {
     guard_main(&window)?;
     let bot = update(&*state.store.lock().map_err(|e| e.to_string())?, &bot_id, &input)?;
     let _ = app.emit("bots-changed", ());
@@ -603,7 +603,7 @@ pub async fn bot_update(app: tauri::AppHandle, window: tauri::WebviewWindow, sta
 }
 
 #[tauri::command]
-pub async fn bot_set_paused(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, bot_id: String, paused: bool) -> Result<Bot> {
+pub async fn bot_set_paused(app: crate::AppHandle, window: crate::WebviewWindow, state: State<'_, AppState>, bot_id: String, paused: bool) -> Result<Bot> {
     guard_main(&window)?;
     if paused {
         gateway::stop_bot(&app, &bot_id).await;
@@ -614,7 +614,7 @@ pub async fn bot_set_paused(app: tauri::AppHandle, window: tauri::WebviewWindow,
 }
 
 #[tauri::command]
-pub async fn bot_reset(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, bot_id: String) -> Result<Bot> {
+pub async fn bot_reset(app: crate::AppHandle, window: crate::WebviewWindow, state: State<'_, AppState>, bot_id: String) -> Result<Bot> {
     guard_main(&window)?;
     gateway::stop_bot(&app, &bot_id).await;
     let bot = reset(&*state.store.lock().map_err(|e| e.to_string())?, &bot_id)?;
@@ -624,7 +624,7 @@ pub async fn bot_reset(app: tauri::AppHandle, window: tauri::WebviewWindow, stat
 }
 
 #[tauri::command]
-pub async fn bot_delete(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, bot_id: String) -> Result<()> {
+pub async fn bot_delete(app: crate::AppHandle, window: crate::WebviewWindow, state: State<'_, AppState>, bot_id: String) -> Result<()> {
     guard_main(&window)?;
     gateway::stop_bot(&app, &bot_id).await;
     channels::stop_bot_channels(&app, &bot_id).await;
@@ -635,14 +635,14 @@ pub async fn bot_delete(app: tauri::AppHandle, window: tauri::WebviewWindow, sta
 }
 
 #[tauri::command]
-pub async fn bot_remember(app: tauri::AppHandle, state: State<'_, AppState>, bot_id: String, content: String) -> Result<Memory> {
+pub async fn bot_remember(app: crate::AppHandle, state: State<'_, AppState>, bot_id: String, content: String) -> Result<Memory> {
     let memory = remember(&*state.store.lock().map_err(|e| e.to_string())?, &bot_id, &content, "user")?;
     let _ = app.emit("bots-changed", ());
     Ok(memory)
 }
 
 #[tauri::command]
-pub async fn bot_forget(app: tauri::AppHandle, state: State<'_, AppState>, bot_id: String, memory_id: String) -> Result<()> {
+pub async fn bot_forget(app: crate::AppHandle, state: State<'_, AppState>, bot_id: String, memory_id: String) -> Result<()> {
     forget(&*state.store.lock().map_err(|e| e.to_string())?, &bot_id, &memory_id)?;
     let _ = app.emit("bots-changed", ());
     Ok(())
@@ -660,31 +660,31 @@ pub async fn bot_project_ids(state: State<'_, AppState>) -> Result<Vec<String>> 
 
 /// Sends a message to the bot from the desktop app, in its desktop conversation.
 #[tauri::command]
-pub async fn bot_message(app: tauri::AppHandle, bot_id: String, text: String) -> Result<String> {
+pub async fn bot_message(app: crate::AppHandle, bot_id: String, text: String) -> Result<String> {
     gateway::deliver(&app, gateway::Inbound { bot_id, channel_id: DESKTOP.into(), thread: DESKTOP.into(), sender_id: DESKTOP.into(), sender_name: "You".into(), text, trusted: true }).await
 }
 
 /// Starts the scheduler and channel connections once the app is ready.
-pub(crate) fn start(app: &tauri::AppHandle) {
+pub(crate) fn start(app: &crate::AppHandle) {
     schedule::start(app.clone());
     channels::start_all(app.clone());
 }
 
 /// Called when any task's run ends; replies for bot conversations go back to their channel.
-pub(crate) fn run_finished(app: &tauri::AppHandle, session_id: &str, successful: bool) {
+pub(crate) fn run_finished(app: &crate::AppHandle, session_id: &str, successful: bool) {
     let app = app.clone();
     let session_id = session_id.to_owned();
     tauri::async_runtime::spawn(async move { gateway::run_finished(&app, &session_id, successful).await });
 }
 
 /// Called when a run asks for approval; bot conversations forward it to their channel.
-pub(crate) fn approval_requested(app: &tauri::AppHandle, session_id: &str, request_id: &str, text: &str) {
+pub(crate) fn approval_requested(app: &crate::AppHandle, session_id: &str, request_id: &str, text: &str) {
     let (app, session_id, request_id, text) = (app.clone(), session_id.to_owned(), request_id.to_owned(), text.to_owned());
     tauri::async_runtime::spawn(async move { gateway::approval_requested(&app, &session_id, &request_id, &text).await });
 }
 
 /// Logs activity from async code without holding the store lock across an await.
-pub(crate) fn note(app: &tauri::AppHandle, bot_id: &str, kind: &str, summary: &str, detail: Value) {
+pub(crate) fn note(app: &crate::AppHandle, bot_id: &str, kind: &str, summary: &str, detail: Value) {
     let state = app.state::<AppState>();
     let result = state.store.lock().map_err(|e| e.to_string()).and_then(|store| log(&store, bot_id, kind, summary, detail));
     if let Err(error) = result {

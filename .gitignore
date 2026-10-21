@@ -18,3 +18,4 @@ website/.astro/
 *.p8
 *.key
 *.pem
+dist-core/

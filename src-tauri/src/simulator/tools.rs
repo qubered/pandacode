@@ -94,7 +94,7 @@ fn control(sims: &Simulators, args: &Value) -> Result<Value, String> {
     look(&device, screen, display, &format!("{report} Now showing "))
 }
 
-fn manage(app: &tauri::AppHandle, sims: &Simulators, args: &Value) -> Result<Value, String> {
+fn manage(app: &crate::AppHandle, sims: &Simulators, args: &Value) -> Result<Value, String> {
     let action = string(args, "action").unwrap_or_default();
     let udid = string(args, "udid");
     let need = |key: &str| string(args, key).ok_or_else(|| format!("Missing argument: {key}"));
@@ -158,7 +158,7 @@ fn devices(sims: &Simulators) -> Result<Value, String> {
     }))
 }
 
-async fn dispatch(app: tauri::AppHandle, name: String, args: Value) -> Result<Value, String> {
+async fn dispatch(app: crate::AppHandle, name: String, args: Value) -> Result<Value, String> {
     crate::blocking(move || {
         let sims = app.state::<Simulators>();
         match name.as_str() {
@@ -187,7 +187,7 @@ async fn dispatch(app: tauri::AppHandle, name: String, args: Value) -> Result<Va
 }
 
 /// Add the simulator tools on macOS; reading is free, acting asks like other host tools.
-pub fn with_simulator(base: Option<ToolHost>, app: tauri::AppHandle, stopped: Arc<AtomicBool>) -> Option<ToolHost> {
+pub fn with_simulator(base: Option<ToolHost>, app: crate::AppHandle, stopped: Arc<AtomicBool>) -> Option<ToolHost> {
     if !cfg!(target_os = "macos") {
         return base;
     }

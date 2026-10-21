@@ -299,6 +299,7 @@ impl FilePreviews {
     /// Called only by the trusted app's browser navigation command. A recreated
     /// private webview has no preview cookie, even though the saved URL is clean.
     /// Never authorize guest-initiated navigation or an unrelated localhost server.
+    #[cfg_attr(not(feature = "desktop"), allow(dead_code))] // used by the embedded browser
     pub(crate) fn navigation_url(&self, url: &tauri::Url) -> Result<tauri::Url> {
         let mut servers = self.servers.lock().map_err(|_| "File preview is unavailable.")?;
         let Some(server) = servers.iter_mut().find(|server| {

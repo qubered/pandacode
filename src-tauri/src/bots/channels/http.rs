@@ -167,7 +167,7 @@ async fn write_response(stream: &mut tokio::net::TcpStream, response: Response) 
     let _ = stream.shutdown().await;
 }
 
-async fn route(app: &tauri::AppHandle, request: Request) -> Response {
+async fn route(app: &crate::AppHandle, request: Request) -> Response {
     let segments: Vec<&str> = request.path.trim_matches('/').split('/').collect();
     match segments.as_slice() {
         ["chat", channel] => web::page(channel),
@@ -179,7 +179,7 @@ async fn route(app: &tauri::AppHandle, request: Request) -> Response {
     }
 }
 
-async fn serve(app: tauri::AppHandle, listener: tokio::net::TcpListener) {
+async fn serve(app: crate::AppHandle, listener: tokio::net::TcpListener) {
     loop {
         let Ok((mut stream, _)) = listener.accept().await else { continue };
         let app = app.clone();
@@ -198,7 +198,7 @@ async fn serve(app: tauri::AppHandle, listener: tokio::net::TcpListener) {
 }
 
 /// Starts the server once and returns its port (0 if it could not start).
-pub(crate) fn ensure_server(app: tauri::AppHandle) -> u16 {
+pub(crate) fn ensure_server(app: crate::AppHandle) -> u16 {
     static START: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = START.lock();
     let port = PORT.load(Ordering::SeqCst);

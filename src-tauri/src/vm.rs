@@ -321,7 +321,7 @@ fn wait_for_vnc(child: &mut Child, timeout: Duration) -> Result<String, String> 
 }
 
 /// Checks idle VMs every minute for the life of the app.
-pub fn watch_idle(app: tauri::AppHandle) {
+pub fn watch_idle(app: crate::AppHandle) {
     use tauri::{Emitter, Manager};
     thread::spawn(move || loop {
         thread::sleep(Duration::from_secs(60));

@@ -538,7 +538,7 @@ async fn check(force: bool) -> Result<Vec<Checked>> {
 
 #[tauri::command]
 pub async fn check_agent_updates(
-    window: tauri::WebviewWindow,
+    window: crate::WebviewWindow,
     force: Option<bool>,
 ) -> Result<Vec<AgentUpdate>> {
     if window.label() != "main" {
@@ -560,8 +560,8 @@ struct Progress {
 
 #[tauri::command]
 pub async fn update_agent(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+    app: crate::AppHandle,
+    window: crate::WebviewWindow,
     provider: String,
 ) -> Result<AgentUpdate> {
     if window.label() != "main" {

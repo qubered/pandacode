@@ -2,9 +2,11 @@ mod agent_tools;
 mod agent_usage;
 mod agent_updates;
 mod agent_usage_providers;
+#[cfg(feature = "desktop")]
 mod appearance;
 mod architect;
 mod bots;
+#[cfg(feature = "desktop")]
 mod browser;
 mod command_operations;
 mod context_recovery;
@@ -32,6 +34,9 @@ mod local_servers;
 mod message_queue;
 mod moodboards;
 mod prompt_attachments;
+#[cfg(feature = "headless")]
+pub mod remote_core;
+#[cfg(feature = "desktop")]
 mod overlay;
 mod provider_settings;
 mod providers;
@@ -66,6 +71,19 @@ use tauri::{Emitter, Manager, State};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 type Result<T> = std::result::Result<T, String>;
+
+// The desktop app runs on Tauri's webview runtime; the headless core (`pandacode-core`,
+// docs/remote-core.md) runs the same commands on Tauri's windowless mock runtime.
+#[cfg(all(feature = "desktop", feature = "headless"))]
+compile_error!("Build the headless core with --no-default-features --features headless.");
+#[cfg(not(any(feature = "desktop", feature = "headless")))]
+compile_error!("Enable the desktop (default) or headless feature.");
+#[cfg(feature = "desktop")]
+pub type Rt = tauri::Wry;
+#[cfg(feature = "headless")]
+pub type Rt = tauri::test::MockRuntime;
+pub type AppHandle = tauri::AppHandle<Rt>;
+pub type WebviewWindow = tauri::WebviewWindow<Rt>;
 struct RunningAgent {
     input: UnboundedSender<RunInput>,
     stopped: Arc<AtomicBool>,
@@ -522,13 +540,13 @@ async fn prompt_activity(state: State<'_, AppState>) -> Result<Vec<(i64, String,
     state.store.lock().map_err(|e| e.to_string())?.prompt_activity(since)
 }
 #[tauri::command]
-async fn pin_session(app: tauri::AppHandle, state: State<'_, AppState>, session_id: String, pinned: bool) -> Result<Session> {
+async fn pin_session(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, pinned: bool) -> Result<Session> {
     let task = state.store.lock().map_err(|e| e.to_string())?.pin_session(&session_id, pinned)?;
     let _ = app.emit("sessions-changed", ());
     Ok(task)
 }
 #[tauri::command]
-async fn reorder_sessions(app: tauri::AppHandle, state: State<'_, AppState>, session_ids: Vec<String>) -> Result<Vec<Session>> {
+async fn reorder_sessions(app: crate::AppHandle, state: State<'_, AppState>, session_ids: Vec<String>) -> Result<Vec<Session>> {
     let store = state.store.clone();
     let tasks = blocking(move || store.lock().map_err(|e| e.to_string())?.reorder_sessions(&session_ids)).await?;
     let _ = app.emit("sessions-changed", ());
@@ -544,9 +562,10 @@ async fn get_task(state: State<'_, AppState>, session_id: String) -> Result<Sess
         store.session(&session_id)?,
     ))
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn configure_window_appearance(
-    window: tauri::Webview,
+    window: tauri::Webview<Rt>,
     reduced_transparency: bool,
     increased_contrast: bool,
     dark_mode: Option<bool>,
@@ -586,7 +605,7 @@ async fn create_session(
 /// Deletes a New task draft that was left before its first prompt. A task
 /// that has since saved a prompt, or never was a draft, is left untouched.
 #[tauri::command]
-async fn discard_draft(app: tauri::AppHandle, window: tauri::WebviewWindow, session_id: String) -> Result<bool> {
+async fn discard_draft(app: crate::AppHandle, window: crate::WebviewWindow, session_id: String) -> Result<bool> {
     if window.label() != "main" {
         return Err("Only the main window can discard new tasks.".into());
     }
@@ -786,7 +805,7 @@ fn blocking_snapshot<T>(work: impl FnOnce() -> T) -> T {
     }
 }
 fn persist_turn_changes(
-    app: &tauri::AppHandle,
+    app: &crate::AppHandle,
     store: &Mutex<Store>,
     sid: &str,
     capture: turn_changes::Captured,
@@ -1060,7 +1079,7 @@ async fn prepare_command(
 
 #[tauri::command]
 async fn send_message(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     mut text: String,
@@ -1102,7 +1121,7 @@ async fn send_message(
 
 #[tauri::command]
 async fn start_task(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<()> {
@@ -1337,7 +1356,7 @@ fn prepare_task_run_in_project(
 }
 
 async fn launch_task(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     text: Option<String>,
@@ -1347,7 +1366,7 @@ async fn launch_task(
 }
 
 async fn launch_task_in_project(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     text: Option<String>,
@@ -1367,7 +1386,7 @@ async fn launch_task_in_project(
 }
 
 async fn launch_operation(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     text: Option<String>,
@@ -1391,7 +1410,7 @@ async fn launch_operation(
 }
 
 pub(crate) fn launch_team_task<'a>(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'a, AppState>,
     session_id: String,
     text: String,
@@ -1419,7 +1438,7 @@ struct OperationAdmission {
 }
 
 async fn launch_operation_admitted(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     text: Option<String>,
@@ -1927,7 +1946,7 @@ async fn launch_operation_admitted(
 }
 #[tauri::command]
 async fn stop_session(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<()> {
@@ -2314,7 +2333,7 @@ async fn git_push(
 /// screenshots, so `send_message` accepts their IDs unchanged.
 #[tauri::command]
 async fn import_prompt_image(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     path: Option<String>,
     data_url: Option<String>,
     name: Option<String>,
@@ -2647,7 +2666,7 @@ async fn resolve_workspace_files(
 }
 #[tauri::command]
 async fn prepare_file_preview(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     project_id: String,
     session_id: Option<String>,
@@ -2670,7 +2689,7 @@ async fn get_run_script(
 }
 #[tauri::command]
 async fn get_run_script_preview(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     project_id: String,
     session_id: Option<String>,
@@ -2695,7 +2714,7 @@ async fn get_run_script_preview(
 }
 #[tauri::command]
 async fn start_run_script_terminal(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     project_id: String,
     session_id: Option<String>,
@@ -2713,12 +2732,15 @@ async fn start_run_script_terminal(
         if request_id.is_some_and(|id| !agent_tools::agent_ui_request_active(app.state(), id)) {
             return Err("Run request was cancelled before the script could start.".into());
         }
-        terminal::start_script(app.clone(), terms, &root, cols, rows)
+        let owner = terminal::Owner { project_id, session_id, kind: "run" };
+        let id = terminal::start_script(app.clone(), terms.clone(), &root, cols, rows)?;
+        terminal::set_owner(&terms, &id, owner)?;
+        Ok(id)
     }).await
 }
 #[tauri::command]
 async fn start_terminal(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     project_id: String,
     session_id: Option<String>,
@@ -2737,9 +2759,21 @@ async fn start_terminal(
             .lock()
             .map_err(|_| "Agent state is unavailable.")?;
         agent_updates::ensure_not_installing()?;
-        terminal::start(app.clone(), terms, &root, cols, rows)
+        let id = terminal::start(app.clone(), terms.clone(), &root, cols, rows)?;
+        terminal::set_owner(&terms, &id, terminal::Owner { project_id, session_id, kind: "shell" })?;
+        Ok(id)
     })
     .await
+}
+/// Live terminals, so a reconnecting remote client can adopt them instead of starting new ones.
+#[tauri::command]
+fn list_terminals(state: State<'_, AppState>) -> Result<Vec<terminal::TerminalInfo>> {
+    terminal::list(&state.terminals)
+}
+/// A terminal's recent output and the byte count it ends at (see `terminal-event.end`).
+#[tauri::command]
+fn terminal_snapshot(state: State<'_, AppState>, terminal_id: String) -> Result<terminal::Snapshot> {
+    terminal::snapshot(&state.terminals, &terminal_id)
 }
 #[tauri::command]
 async fn write_terminal(
@@ -2825,6 +2859,22 @@ async fn get_metrics(state: State<'_, AppState>) -> Result<Metrics> {
     .await
 }
 
+#[derive(Serialize)]
+struct CoreInfo {
+    version: &'static str,
+    remote: bool,
+    platform: &'static str,
+}
+/// What the frontend is talking to: the desktop app or a headless core (remote mode).
+#[tauri::command]
+fn core_info() -> CoreInfo {
+    CoreInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        remote: cfg!(feature = "headless"),
+        platform: std::env::consts::OS,
+    }
+}
+
 #[tauri::command]
 async fn list_local_servers() -> Result<Vec<local_servers::LocalServer>> {
     local_servers::list().await
@@ -2836,6 +2886,411 @@ pub fn prepare_environment() {
     providers::widen_process_path();
 }
 
+/// Core state and background work shared by the desktop app and the headless core:
+/// provider settings, the task store, the agent registry, and their watchdogs.
+pub(crate) fn setup_core(app: &AppHandle, dir: &std::path::Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    if let Ok(cache) = app.path().app_cache_dir() {
+        turn_changes::cleanup_cache(&cache.join("turn-captures"));
+    }
+    std::fs::create_dir_all(dir)?;
+    provider_settings::setup(dir).map_err(std::io::Error::other)?;
+    // Optional integration storage must never prevent the workspace from opening.
+    if jev::setup(dir).is_err() {
+        eprintln!("Jev settings are unavailable; browser testing remains disabled.");
+    }
+    // Retain the database filename and bundle identifier so upgrades reuse existing data.
+    let store = Store::open(&dir.join("kingcode.sqlite3")).map_err(std::io::Error::other)?;
+    if let Err(error) = store.discard_empty_drafts() {
+        eprintln!("Could not clear unsent new tasks: {error}");
+    }
+    app.manage(AppState {
+        store: Arc::new(Mutex::new(store)),
+        agents: Arc::new(Mutex::new(HashMap::new())),
+        terminals: Arc::new(Mutex::new(HashMap::new())),
+        shutdown: AtomicU8::new(0),
+    });
+    app.manage(simulator::Simulators::default());
+    app.manage(vm::Vms::default());
+    vm::watch_idle(app.clone());
+    app.manage(file_preview::FilePreviews::default());
+    app.manage(agent_tools::UiRequests::default());
+    app.manage(architect::Runtime::default());
+    architect::watchdog::watch(app.clone());
+    bots::start(app);
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let state = handle.state::<AppState>();
+            if state.shutdown.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            let archived = state
+                .store
+                .lock()
+                .map_err(|e| e.to_string())
+                .and_then(|store| store.archive_completed(storage::now()));
+            match archived {
+                Ok(count) if count > 0 => {
+                    let _ = handle.emit("sessions-changed", ());
+                }
+                Err(error) => eprintln!("Completed task archive failed: {error}"),
+                _ => {}
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Every command the main window (or a remote client) may call; the launcher gets a short list.
+pub(crate) fn invoke_handler(invoke: tauri::ipc::Invoke<Rt>) -> bool {
+    if invoke.message.webview_ref().label() == "launcher" {
+        let handler: fn(tauri::ipc::Invoke<Rt>) -> bool = tauri::generate_handler![
+            #[cfg(feature = "desktop")]
+            overlay::overlay_snapshot,
+            #[cfg(feature = "desktop")]
+            overlay::overlay_thread,
+            #[cfg(feature = "desktop")]
+            overlay::overlay_launch,
+            #[cfg(feature = "desktop")]
+            overlay::overlay_select_model,
+            #[cfg(feature = "desktop")]
+            overlay::overlay_hide,
+            #[cfg(feature = "desktop")]
+            overlay::overlay_open_task,
+            task_controls::fork_session_at_message,
+            task_controls::get_message_content,
+            list_providers,
+            list_provider_models,
+            search_files,
+        ];
+        return handler(invoke);
+    }
+    if invoke.message.webview_ref().label() != "main" {
+        invoke
+            .resolver
+            .reject("Browser content has no application access.");
+        return true;
+    }
+    let handler: fn(tauri::ipc::Invoke<Rt>) -> bool = tauri::generate_handler![
+        support::open_support,
+        support::support_details,
+        agent_updates::check_agent_updates,
+        agent_updates::update_agent,
+        moodboards::list_moodboards,
+        moodboards::create_moodboard,
+        moodboards::read_moodboard,
+        moodboards::rename_moodboard,
+        moodboards::delete_moodboard,
+        moodboards::add_moodboard_image,
+        moodboards::import_moodboard_images,
+        moodboards::update_moodboard_image,
+        moodboards::remove_moodboard_image,
+        moodboards::moodboard_image,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_preferences,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_save_preferences,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_recording,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_sync_context,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_toggle,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_hide,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_snapshot,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_thread,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_launch,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_select_model,
+        #[cfg(feature = "desktop")]
+        overlay::overlay_open_task,
+        provider_settings::provider_configuration,
+        agent_usage::agent_usage,
+        usage_ledger::usage_ledger,
+        prompt_activity,
+        set_resume_at_reset,
+        clear_usage_limit,
+        discard_draft,
+        message_queue::queue_list,
+        message_queue::queue_add,
+        message_queue::queue_update,
+        message_queue::queue_remove,
+        message_queue::queue_reorder,
+        message_queue::queue_take,
+        message_queue::queue_restore,
+        message_queue::steer_task,
+        bots::bots_list,
+        bots::bot_desktop_thread,
+        bots::bot_detail,
+        bots::bot_create,
+        bots::bot_update,
+        bots::bot_set_paused,
+        bots::bot_reset,
+        bots::bot_delete,
+        bots::bot_remember,
+        bots::bot_forget,
+        bots::bot_activity,
+        bots::bot_project_ids,
+        bots::bot_message,
+        bots::schedule::bot_schedule_create,
+        bots::schedule::bot_schedule_set_enabled,
+        bots::schedule::bot_schedule_delete,
+        bots::schedule::bot_run_schedule_now,
+        bots::channels::bot_channel_add,
+        bots::channels::bot_channel_test,
+        bots::channels::bot_channel_configure,
+        bots::channels::bot_channel_set_enabled,
+        bots::channels::bot_channel_remove,
+        bots::channels::bot_pairing_decide,
+        bots::channels::bot_web_link,
+        bots::channels::bot_web_new_link,
+        bots::guard::bot_rule_add,
+        bots::guard::bot_rule_delete,
+        conversation_import::list_importable_conversations,
+        conversation_import::import_conversations,
+        provider_settings::provider_set_claude_connection_mode,
+        providers::claude_auth::provider_claude_status,
+        provider_settings::list_opencode_models,
+        provider_settings::save_opencode_models,
+        provider_settings::provider_set_executable,
+        provider_settings::provider_save_glm_key,
+        provider_settings::provider_remove_glm_key,
+        provider_settings::provider_save_mimo_key,
+        provider_settings::provider_remove_mimo_key,
+        provider_settings::provider_save_deepseek_key,
+        provider_settings::provider_remove_deepseek_key,
+        provider_settings::provider_set_mimo_endpoint,
+        architect::profiles::architect_profiles,
+        architect::profiles::architect_save_profile,
+        architect::profiles::architect_delete_profile,
+        architect::architect_get,
+        architect::architect_configure,
+        architect::architect_start,
+        architect::architect_control,
+        architect::architect_worker_messages,
+        architect::coordination::architect_team_messages,
+        task_controls::task_goal,
+        task_controls::codex_command,
+        task_controls::codex_jobs,
+        task_controls::set_task_preference,
+        task_controls::fork_codex_task,
+        task_controls::fork_session_at_message,
+        task_controls::get_message_content,
+        task_controls::archive_codex_task,
+        task_controls::export_task,
+        task_controls::save_task_export,
+        task_controls::start_harness_terminal,
+        list_projects,
+        add_project,
+        remove_project,
+        list_sessions,
+        pin_session,
+        reorder_sessions,
+        get_task,
+        #[cfg(feature = "desktop")]
+        configure_window_appearance,
+        create_session,
+        create_board_task,
+        update_task_details,
+        set_task_stage,
+        start_task,
+        configure_session,
+        set_reasoning_effort,
+        update_session,
+        task_deletion::delete_session,
+        get_messages,
+        turn_changes::turn_change_diff,
+        turn_changes::turn_change_summary,
+        list_subagents,
+        send_message,
+        list_slash_commands,
+        providers::acp::provider_check_connection,
+        resolve_slash_command,
+        stop_session,
+        respond_approval,
+        respond_user_input,
+        list_agent_integrations,
+        list_app_tools,
+        open_external_url,
+        agent_tools::agent_ui_request_active,
+        agent_tools::resolve_agent_ui_action,
+        #[cfg(feature = "desktop")]
+        browser::browser_inspect,
+        list_providers,
+        list_provider_models,
+        git_status,
+        git_diff,
+        git_stage,
+        git_commit,
+        git_branches,
+        git_switch_branch,
+        git_push,
+        create_worktree,
+        attach_worktree,
+        worktree_status,
+        remove_worktree,
+        merge_worktree,
+        recreate_worktree,
+        github_status,
+        github_repos,
+        project_icon,
+        github_repo_pulls,
+        github_repo_issues,
+        github_repo_runs,
+        github_project_repos,
+        github_clone_repo,
+        github_search,
+        github_issues,
+        github_resolve,
+        github_refresh_links,
+        github_create_pull_request,
+        github_pull_request,
+        github_pull_request_diff,
+        github_merge_pull_request,
+        github_detect_pull_request,
+        github_link_pull_request,
+        simulator::commands::simulator_status,
+        simulator::commands::simulator_select,
+        simulator::commands::simulator_create_duo,
+        simulator::commands::simulator_pose,
+        simulator::commands::simulator_power,
+        simulator::commands::simulator_frame,
+        simulator::commands::simulator_input,
+        simulator::commands::simulator_appearance,
+        simulator::commands::simulator_capture,
+        simulator::android_setup::android_setup,
+        vm::commands::vm_status,
+        vm::commands::vm_show,
+        vm::commands::vm_create,
+        vm::commands::vm_power,
+        vm::commands::vm_frame,
+        vm::commands::vm_input,
+        vm::commands::vm_desktop,
+        vm::setup::vm_setup,
+        cloud::commands::cloud_connections,
+        cloud::commands::cloud_connect,
+        cloud::commands::cloud_disconnect,
+        cloud::commands::cloud_setup_sandboxes,
+        cloud::commands::cloud_machines,
+        cloud::commands::cloud_create,
+        cloud::commands::cloud_power,
+        cloud::commands::cloud_frame,
+        cloud::commands::cloud_input,
+        vsix_themes::themes_list,
+        vsix_themes::theme_import,
+        vsix_themes::theme_install,
+        vsix_themes::theme_remove,
+        token_saver::token_saver_tools,
+        token_saver::token_saver_install,
+        set_task_link,
+        import_prompt_image,
+        read_document,
+        describe_folder,
+        list_files,
+        search_files,
+        read_file,
+        workspace_image,
+        resolve_workspace_files,
+        prepare_file_preview,
+        get_run_script,
+        get_run_script_preview,
+        start_run_script_terminal,
+        start_terminal,
+        write_terminal,
+        resize_terminal,
+        close_terminal,
+        list_terminals,
+        terminal_snapshot,
+        get_terminal_activity,
+        get_terminal_preferences,
+        get_metrics,
+        list_local_servers,
+        core_info,
+        jev::jev_configuration,
+        jev::jev_save_configuration,
+        jev::jev_doctor,
+        jev::jev_install_runtime,
+        jev::jev_start,
+        jev::jev_watch_run,
+        jev::jev_cancel,
+        jev::jev_list_runs,
+        jev::jev_read_run,
+        jev_decisions::jev_assist_prepare,
+        jev_decisions::jev_assist_run,
+        jev_decisions::jev_assist_list,
+        jev_decisions::jev_assist_save_rules,
+        #[cfg(feature = "desktop")]
+        browser::browser_open,
+        #[cfg(feature = "desktop")]
+        browser::browser_bounds,
+        #[cfg(feature = "desktop")]
+        browser::browser_action,
+        #[cfg(feature = "desktop")]
+        browser::browser_pick,
+        #[cfg(feature = "desktop")]
+        browser::browser_capture,
+        #[cfg(feature = "desktop")]
+        browser::browser_close,
+    ];
+    handler(invoke)
+}
+
+/// First step of quitting: stops agents and closes terminals. Returns false when a
+/// shutdown is already under way.
+pub(crate) fn begin_shutdown(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    if state.shutdown.swap(1, Ordering::SeqCst) == 1 {
+        return false;
+    }
+    jev::shutdown();
+    app.state::<file_preview::FilePreviews>().shutdown();
+    if let Ok(agents) = state.agents.lock() {
+        for tx in agents.values() {
+            let _ = tx.send(RunInput::Stop);
+        }
+    }
+    if let Ok(mut terms) = state.terminals.lock() {
+        terms.clear();
+    };
+    true
+}
+
+/// Waits (up to 12 s) for stopped agents to persist, then ends every provider process.
+pub(crate) async fn finish_shutdown(app: AppHandle) {
+    let agents = app.state::<AppState>().agents.clone();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(12);
+    while tokio::time::Instant::now() < deadline {
+        if agents.lock().map(|a| a.is_empty()).unwrap_or(true) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    providers::shutdown_all();
+    // Let pending pipe EOFs finish persistence after a forced cleanup.
+    for _ in 0..20 {
+        if agents.lock().map(|a| a.is_empty()).unwrap_or(true) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    app.state::<AppState>().shutdown.store(2, Ordering::SeqCst);
+}
+
+/// Last step of quitting: releases what PandaCode started outside its own process.
+pub(crate) fn release_resources(app: &AppHandle) {
+    app.state::<file_preview::FilePreviews>().shutdown();
+    // VMs PandaCode started release their memory when it quits.
+    app.state::<vm::Vms>().shutdown();
+    cloud::aws_screen::close(None);
+    providers::shutdown_all();
+}
+
+#[cfg(feature = "desktop")]
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -2843,60 +3298,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            if let Ok(cache) = app.path().app_cache_dir() {
-                turn_changes::cleanup_cache(&cache.join("turn-captures"));
-            }
             let dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&dir)?;
-            provider_settings::setup(&dir).map_err(std::io::Error::other)?;
-            // Optional integration storage must never prevent the workspace from opening.
-            if jev::setup(&dir).is_err() {
-                eprintln!("Jev settings are unavailable; browser testing remains disabled.");
-            }
-            // Retain the database filename and bundle identifier so upgrades reuse existing data.
-            let store =
-                Store::open(&dir.join("kingcode.sqlite3")).map_err(std::io::Error::other)?;
-            if let Err(error) = store.discard_empty_drafts() {
-                eprintln!("Could not clear unsent new tasks: {error}");
-            }
-            app.manage(AppState {
-                store: Arc::new(Mutex::new(store)),
-                agents: Arc::new(Mutex::new(HashMap::new())),
-                terminals: Arc::new(Mutex::new(HashMap::new())),
-                shutdown: AtomicU8::new(0),
-            });
+            setup_core(app.handle(), &dir)?;
             overlay::setup(app.handle(), &dir).map_err(std::io::Error::other)?;
             app.manage(browser::BrowserState::default());
-            app.manage(simulator::Simulators::default());
-            app.manage(vm::Vms::default());
-            vm::watch_idle(app.handle().clone());
-            app.manage(file_preview::FilePreviews::default());
-            app.manage(agent_tools::UiRequests::default());
-            app.manage(architect::Runtime::default());
-            architect::watchdog::watch(app.handle().clone());
-            bots::start(app.handle());
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                    let state = handle.state::<AppState>();
-                    if state.shutdown.load(Ordering::SeqCst) != 0 {
-                        break;
-                    }
-                    let archived = state
-                        .store
-                        .lock()
-                        .map_err(|e| e.to_string())
-                        .and_then(|store| store.archive_completed(storage::now()));
-                    match archived {
-                        Ok(count) if count > 0 => {
-                            let _ = handle.emit("sessions-changed", ());
-                        }
-                        Err(error) => eprintln!("Completed task archive failed: {error}"),
-                        _ => {}
-                    }
-                }
-            });
             if let Some(window) = app.get_webview_window("main") {
                 if let Err(error) = appearance::setup(&window) {
                     eprintln!("Native appearance setup failed: {error}");
@@ -2904,326 +3309,25 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(|invoke: tauri::ipc::Invoke<tauri::Wry>| {
-            if invoke.message.webview_ref().label() == "launcher" {
-                let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
-                    overlay::overlay_snapshot,
-                    overlay::overlay_thread,
-                    overlay::overlay_launch,
-                    overlay::overlay_select_model,
-                    overlay::overlay_hide,
-                    overlay::overlay_open_task,
-                    task_controls::fork_session_at_message,
-                    task_controls::get_message_content,
-                    list_providers,
-                    list_provider_models,
-                    search_files,
-                ];
-                return handler(invoke);
-            }
-            if invoke.message.webview_ref().label() != "main" {
-                invoke
-                    .resolver
-                    .reject("Browser content has no application access.");
-                return true;
-            }
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
-                support::open_support,
-                support::support_details,
-                agent_updates::check_agent_updates,
-                agent_updates::update_agent,
-                moodboards::list_moodboards,
-                moodboards::create_moodboard,
-                moodboards::read_moodboard,
-                moodboards::rename_moodboard,
-                moodboards::delete_moodboard,
-                moodboards::add_moodboard_image,
-                moodboards::import_moodboard_images,
-                moodboards::update_moodboard_image,
-                moodboards::remove_moodboard_image,
-                moodboards::moodboard_image,
-                overlay::overlay_preferences,
-                overlay::overlay_save_preferences,
-                overlay::overlay_recording,
-                overlay::overlay_sync_context,
-                overlay::overlay_toggle,
-                overlay::overlay_hide,
-                overlay::overlay_snapshot,
-                overlay::overlay_thread,
-                overlay::overlay_launch,
-                overlay::overlay_select_model,
-                overlay::overlay_open_task,
-                provider_settings::provider_configuration,
-                agent_usage::agent_usage,
-                usage_ledger::usage_ledger,
-                prompt_activity,
-                set_resume_at_reset,
-                clear_usage_limit,
-                discard_draft,
-                message_queue::queue_list,
-                message_queue::queue_add,
-                message_queue::queue_update,
-                message_queue::queue_remove,
-                message_queue::queue_reorder,
-                message_queue::queue_take,
-                message_queue::queue_restore,
-                message_queue::steer_task,
-                bots::bots_list,
-                bots::bot_desktop_thread,
-                bots::bot_detail,
-                bots::bot_create,
-                bots::bot_update,
-                bots::bot_set_paused,
-                bots::bot_reset,
-                bots::bot_delete,
-                bots::bot_remember,
-                bots::bot_forget,
-                bots::bot_activity,
-                bots::bot_project_ids,
-                bots::bot_message,
-                bots::schedule::bot_schedule_create,
-                bots::schedule::bot_schedule_set_enabled,
-                bots::schedule::bot_schedule_delete,
-                bots::schedule::bot_run_schedule_now,
-                bots::channels::bot_channel_add,
-                bots::channels::bot_channel_test,
-                bots::channels::bot_channel_configure,
-                bots::channels::bot_channel_set_enabled,
-                bots::channels::bot_channel_remove,
-                bots::channels::bot_pairing_decide,
-                bots::channels::bot_web_link,
-                bots::channels::bot_web_new_link,
-                bots::guard::bot_rule_add,
-                bots::guard::bot_rule_delete,
-                conversation_import::list_importable_conversations,
-                conversation_import::import_conversations,
-                provider_settings::provider_set_claude_connection_mode,
-                providers::claude_auth::provider_claude_status,
-                provider_settings::list_opencode_models,
-                provider_settings::save_opencode_models,
-                provider_settings::provider_set_executable,
-                provider_settings::provider_save_glm_key,
-                provider_settings::provider_remove_glm_key,
-                provider_settings::provider_save_mimo_key,
-                provider_settings::provider_remove_mimo_key,
-                provider_settings::provider_save_deepseek_key,
-                provider_settings::provider_remove_deepseek_key,
-                provider_settings::provider_set_mimo_endpoint,
-                architect::profiles::architect_profiles,
-                architect::profiles::architect_save_profile,
-                architect::profiles::architect_delete_profile,
-                architect::architect_get,
-                architect::architect_configure,
-                architect::architect_start,
-                architect::architect_control,
-                architect::architect_worker_messages,
-                architect::coordination::architect_team_messages,
-                task_controls::task_goal,
-                task_controls::codex_command,
-                task_controls::codex_jobs,
-                task_controls::set_task_preference,
-                task_controls::fork_codex_task,
-                task_controls::fork_session_at_message,
-                task_controls::get_message_content,
-                task_controls::archive_codex_task,
-                task_controls::export_task,
-                task_controls::save_task_export,
-                task_controls::start_harness_terminal,
-                list_projects,
-                add_project,
-                remove_project,
-                list_sessions,
-                pin_session,
-                reorder_sessions,
-                get_task,
-                configure_window_appearance,
-                create_session,
-                create_board_task,
-                update_task_details,
-                set_task_stage,
-                start_task,
-                configure_session,
-                set_reasoning_effort,
-                update_session,
-                task_deletion::delete_session,
-                get_messages,
-                turn_changes::turn_change_diff,
-                turn_changes::turn_change_summary,
-                list_subagents,
-                send_message,
-                list_slash_commands,
-                providers::acp::provider_check_connection,
-                resolve_slash_command,
-                stop_session,
-                respond_approval,
-                respond_user_input,
-                list_agent_integrations,
-                list_app_tools,
-                open_external_url,
-                agent_tools::agent_ui_request_active,
-                agent_tools::resolve_agent_ui_action,
-                browser::browser_inspect,
-                list_providers,
-                list_provider_models,
-                git_status,
-                git_diff,
-                git_stage,
-                git_commit,
-                git_branches,
-                git_switch_branch,
-                git_push,
-                create_worktree,
-                attach_worktree,
-                worktree_status,
-                remove_worktree,
-                merge_worktree,
-                recreate_worktree,
-                github_status,
-                github_repos,
-                project_icon,
-                github_repo_pulls,
-                github_repo_issues,
-                github_repo_runs,
-                github_project_repos,
-                github_clone_repo,
-                github_search,
-                github_issues,
-                github_resolve,
-                github_refresh_links,
-                github_create_pull_request,
-                github_pull_request,
-                github_pull_request_diff,
-                github_merge_pull_request,
-                github_detect_pull_request,
-                github_link_pull_request,
-                simulator::commands::simulator_status,
-                simulator::commands::simulator_select,
-                simulator::commands::simulator_create_duo,
-                simulator::commands::simulator_pose,
-                simulator::commands::simulator_power,
-                simulator::commands::simulator_frame,
-                simulator::commands::simulator_input,
-                simulator::commands::simulator_appearance,
-                simulator::commands::simulator_capture,
-                simulator::android_setup::android_setup,
-                vm::commands::vm_status,
-                vm::commands::vm_show,
-                vm::commands::vm_create,
-                vm::commands::vm_power,
-                vm::commands::vm_frame,
-                vm::commands::vm_input,
-                vm::commands::vm_desktop,
-                vm::setup::vm_setup,
-                cloud::commands::cloud_connections,
-                cloud::commands::cloud_connect,
-                cloud::commands::cloud_disconnect,
-                cloud::commands::cloud_setup_sandboxes,
-                cloud::commands::cloud_machines,
-                cloud::commands::cloud_create,
-                cloud::commands::cloud_power,
-                cloud::commands::cloud_frame,
-                cloud::commands::cloud_input,
-                vsix_themes::themes_list,
-                vsix_themes::theme_import,
-                vsix_themes::theme_install,
-                vsix_themes::theme_remove,
-                token_saver::token_saver_tools,
-                token_saver::token_saver_install,
-                set_task_link,
-                import_prompt_image,
-                read_document,
-                describe_folder,
-                list_files,
-                search_files,
-                read_file,
-                workspace_image,
-                resolve_workspace_files,
-                prepare_file_preview,
-                get_run_script,
-                get_run_script_preview,
-                start_run_script_terminal,
-                start_terminal,
-                write_terminal,
-                resize_terminal,
-                close_terminal,
-                get_terminal_activity,
-                get_terminal_preferences,
-                get_metrics,
-                list_local_servers,
-                jev::jev_configuration,
-                jev::jev_save_configuration,
-                jev::jev_doctor,
-                jev::jev_install_runtime,
-                jev::jev_start,
-                jev::jev_watch_run,
-                jev::jev_cancel,
-                jev::jev_list_runs,
-                jev::jev_read_run,
-                jev_decisions::jev_assist_prepare,
-                jev_decisions::jev_assist_run,
-                jev_decisions::jev_assist_list,
-                jev_decisions::jev_assist_save_rules,
-                browser::browser_open,
-                browser::browser_bounds,
-                browser::browser_action,
-                browser::browser_pick,
-                browser::browser_capture,
-                browser::browser_close
-            ];
-            handler(invoke)
-        })
+        .invoke_handler(invoke_handler)
         .build(tauri::generate_context!())
         .expect("Failed to launch PandaCode");
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            let state = app.state::<AppState>();
-            if state.shutdown.load(Ordering::SeqCst) == 2 {
+            if app.state::<AppState>().shutdown.load(Ordering::SeqCst) == 2 {
                 return;
             }
             api.prevent_exit();
-            if state.shutdown.swap(1, Ordering::SeqCst) == 1 {
+            if !begin_shutdown(app) {
                 return;
             }
-            jev::shutdown();
-            app.state::<file_preview::FilePreviews>().shutdown();
-            if let Ok(agents) = state.agents.lock() {
-                for tx in agents.values() {
-                    let _ = tx.send(RunInput::Stop);
-                }
-            }
-            if let Ok(mut terms) = state.terminals.lock() {
-                terms.clear();
-            };
             let handle = app.clone();
-            let agents = state.agents.clone();
             tauri::async_runtime::spawn(async move {
-                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(12);
-                while tokio::time::Instant::now() < deadline {
-                    if agents.lock().map(|a| a.is_empty()).unwrap_or(true) {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-                providers::shutdown_all();
-                // Let pending pipe EOFs finish persistence after a forced cleanup.
-                for _ in 0..20 {
-                    if agents.lock().map(|a| a.is_empty()).unwrap_or(true) {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-                handle
-                    .state::<AppState>()
-                    .shutdown
-                    .store(2, Ordering::SeqCst);
+                finish_shutdown(handle.clone()).await;
                 handle.exit(0);
             });
         } else if matches!(event, tauri::RunEvent::Exit) {
-            app.state::<file_preview::FilePreviews>().shutdown();
-            // VMs PandaCode started release their memory when it quits.
-            app.state::<vm::Vms>().shutdown();
-            cloud::aws_screen::close(None);
-            providers::shutdown_all();
+            release_resources(app);
         }
     });
 }

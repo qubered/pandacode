@@ -316,7 +316,7 @@ fn run(checkout: &Path, args: &Value) -> Result<Value, String> {
 }
 
 /// The task's checkout: its worktree, else its project folder.
-fn checkout(app: &tauri::AppHandle, session_id: &str) -> Option<PathBuf> {
+fn checkout(app: &crate::AppHandle, session_id: &str) -> Option<PathBuf> {
     use tauri::Manager;
     let state = app.state::<crate::AppState>();
     let store = state.store.lock().ok()?;
@@ -325,7 +325,7 @@ fn checkout(app: &tauri::AppHandle, session_id: &str) -> Option<PathBuf> {
 }
 
 /// Offer the tool only when at least one deploy account is connected; every call asks.
-pub fn with_deploy(base: Option<ToolHost>, app: tauri::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> Option<ToolHost> {
+pub fn with_deploy(base: Option<ToolHost>, app: crate::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> Option<ToolHost> {
     let settings = super::settings();
     let any = super::secret("vercel_token").is_some() || super::secret("cloudflare_token").is_some() || super::secret("railway_token").is_some() || settings.aws_region.is_some() || settings.gcloud_project.is_some();
     if !any {

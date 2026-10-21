@@ -298,7 +298,7 @@ pub(crate) fn decide_pairing(store: &Store, channel_id: &str, sender_id: &str, d
 }
 
 /// Entry point for every chat channel: pairing first, then the gateway.
-pub(crate) async fn handle_inbound(app: &tauri::AppHandle, channel_id: &str, sender_id: &str, sender_name: &str, thread: &str, text: &str) {
+pub(crate) async fn handle_inbound(app: &crate::AppHandle, channel_id: &str, sender_id: &str, sender_name: &str, thread: &str, text: &str) {
     let state = app.state::<AppState>();
     let decision = {
         let Ok(store) = state.store.lock() else { return };
@@ -327,7 +327,7 @@ pub(crate) async fn handle_inbound(app: &tauri::AppHandle, channel_id: &str, sen
     }
 }
 
-pub(crate) async fn send(app: &tauri::AppHandle, channel_id: &str, thread: &str, text: &str) -> Result<()> {
+pub(crate) async fn send(app: &crate::AppHandle, channel_id: &str, thread: &str, text: &str) -> Result<()> {
     let channel = get(&*app.state::<AppState>().store.lock().map_err(|e| e.to_string())?, channel_id)?;
     for part in chunks(text, limit(&channel.kind)) {
         match channel.kind.as_str() {
@@ -364,7 +364,7 @@ pub(crate) fn client() -> Result<reqwest::Client> {
         .map_err(|e| e.to_string())
 }
 
-pub(crate) fn update_status(app: &tauri::AppHandle, channel_id: &str, status: &str) {
+pub(crate) fn update_status(app: &crate::AppHandle, channel_id: &str, status: &str) {
     if let Ok(store) = app.state::<AppState>().store.lock() {
         set_status(&store, channel_id, status);
     }
@@ -372,7 +372,7 @@ pub(crate) fn update_status(app: &tauri::AppHandle, channel_id: &str, status: &s
 }
 
 /// Starts (or restarts) one channel's connection loop. Web channels share the local server.
-pub(crate) fn start(app: &tauri::AppHandle, channel: Channel) {
+pub(crate) fn start(app: &crate::AppHandle, channel: Channel) {
     stop(&channel.id);
     if !channel.enabled {
         update_status(app, &channel.id, "Off");
@@ -428,7 +428,7 @@ pub(crate) fn stop(channel_id: &str) {
     }
 }
 
-pub(crate) fn start_all(app: tauri::AppHandle) {
+pub(crate) fn start_all(app: crate::AppHandle) {
     let channels: Vec<Channel> = {
         let state = app.state::<AppState>();
         let Ok(store) = state.store.lock() else { return };
@@ -439,7 +439,7 @@ pub(crate) fn start_all(app: tauri::AppHandle) {
     }
 }
 
-pub(crate) async fn stop_bot_channels(app: &tauri::AppHandle, bot_id: &str) {
+pub(crate) async fn stop_bot_channels(app: &crate::AppHandle, bot_id: &str) {
     let ids: Vec<String> = app.state::<AppState>().store.lock().ok().and_then(|store| list(&store, bot_id).ok()).unwrap_or_default().into_iter().map(|c| c.id).collect();
     for id in ids {
         stop(&id);
@@ -449,7 +449,7 @@ pub(crate) async fn stop_bot_channels(app: &tauri::AppHandle, bot_id: &str) {
 // --- Desktop commands -----------------------------------------------------------
 
 #[tauri::command]
-pub async fn bot_channel_add(app: tauri::AppHandle, state: State<'_, AppState>, bot_id: String, input: ChannelInput) -> Result<Channel> {
+pub async fn bot_channel_add(app: crate::AppHandle, state: State<'_, AppState>, bot_id: String, input: ChannelInput) -> Result<Channel> {
     // Check credentials first, so a typo is caught here rather than as a silent connection failure.
     let identity = verify(&input).await?;
     let mut input = input;
@@ -489,7 +489,7 @@ pub(crate) fn configure(store: &Store, channel_id: &str, patch: &Value) -> Resul
 }
 
 #[tauri::command]
-pub async fn bot_channel_configure(app: tauri::AppHandle, state: State<'_, AppState>, channel_id: String, config: Value) -> Result<Channel> {
+pub async fn bot_channel_configure(app: crate::AppHandle, state: State<'_, AppState>, channel_id: String, config: Value) -> Result<Channel> {
     let channel = configure(&*state.store.lock().map_err(|e| e.to_string())?, &channel_id, &config)?;
     let _ = app.emit("bots-changed", ());
     Ok(channel)
@@ -502,7 +502,7 @@ pub async fn bot_channel_test(input: ChannelInput) -> Result<Identity> {
 }
 
 #[tauri::command]
-pub async fn bot_channel_set_enabled(app: tauri::AppHandle, state: State<'_, AppState>, channel_id: String, enabled: bool) -> Result<Channel> {
+pub async fn bot_channel_set_enabled(app: crate::AppHandle, state: State<'_, AppState>, channel_id: String, enabled: bool) -> Result<Channel> {
     let channel = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         store.db.execute("UPDATE bot_channels SET enabled=?2 WHERE id=?1", params![channel_id, enabled]).map_err(|e| e.to_string())?;
@@ -514,7 +514,7 @@ pub async fn bot_channel_set_enabled(app: tauri::AppHandle, state: State<'_, App
 }
 
 #[tauri::command]
-pub async fn bot_channel_remove(app: tauri::AppHandle, state: State<'_, AppState>, channel_id: String) -> Result<()> {
+pub async fn bot_channel_remove(app: crate::AppHandle, state: State<'_, AppState>, channel_id: String) -> Result<()> {
     stop(&channel_id);
     secrets::remove_all(&channel_id);
     let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -526,7 +526,7 @@ pub async fn bot_channel_remove(app: tauri::AppHandle, state: State<'_, AppState
 }
 
 #[tauri::command]
-pub async fn bot_pairing_decide(app: tauri::AppHandle, state: State<'_, AppState>, channel_id: String, sender_id: String, decision: String) -> Result<()> {
+pub async fn bot_pairing_decide(app: crate::AppHandle, state: State<'_, AppState>, channel_id: String, sender_id: String, decision: String) -> Result<()> {
     decide_pairing(&*state.store.lock().map_err(|e| e.to_string())?, &channel_id, &sender_id, &decision)?;
     if decision == "approved" {
         let kind = kind_of(&*state.store.lock().map_err(|e| e.to_string())?, &channel_id).unwrap_or_default();
@@ -543,7 +543,7 @@ pub(crate) fn direct_thread(kind: &str, sender_id: &str) -> String {
 
 /// The web chat link for a web channel, including its access token.
 #[tauri::command]
-pub async fn bot_web_link(app: tauri::AppHandle, state: State<'_, AppState>, channel_id: String) -> Result<String> {
+pub async fn bot_web_link(app: crate::AppHandle, state: State<'_, AppState>, channel_id: String) -> Result<String> {
     let channel = get(&*state.store.lock().map_err(|e| e.to_string())?, &channel_id)?;
     if channel.kind != "web" {
         return Err("Only web channels have a chat link.".into());
@@ -555,7 +555,7 @@ pub async fn bot_web_link(app: tauri::AppHandle, state: State<'_, AppState>, cha
 
 /// Replaces the web chat link; pages opened with the old one stop working.
 #[tauri::command]
-pub async fn bot_web_new_link(app: tauri::AppHandle, state: State<'_, AppState>, channel_id: String) -> Result<String> {
+pub async fn bot_web_new_link(app: crate::AppHandle, state: State<'_, AppState>, channel_id: String) -> Result<String> {
     {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let channel = get(&store, &channel_id)?;

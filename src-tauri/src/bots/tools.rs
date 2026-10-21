@@ -35,7 +35,7 @@ fn names() -> Vec<String> {
 }
 
 /// Adds bot tools when the task belongs to a bot; otherwise returns the host unchanged.
-pub(crate) fn with_bot(base: Option<ToolHost>, app: tauri::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> Option<ToolHost> {
+pub(crate) fn with_bot(base: Option<ToolHost>, app: crate::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> Option<ToolHost> {
     let owned = app.state::<AppState>().store.lock().ok().and_then(|store| owner_of(&store, &session_id).ok().flatten()).is_some();
     if !owned {
         return base;
@@ -65,7 +65,7 @@ pub(crate) fn with_bot(base: Option<ToolHost>, app: tauri::AppHandle, session_id
     })
 }
 
-pub(crate) async fn dispatch(app: &tauri::AppHandle, session_id: &str, name: &str, args: &Value) -> Result<Value> {
+pub(crate) async fn dispatch(app: &crate::AppHandle, session_id: &str, name: &str, args: &Value) -> Result<Value> {
     let state = app.state::<AppState>();
     let (bot, _) = owner_of(&*state.store.lock().map_err(|e| e.to_string())?, session_id)?.ok_or("This task no longer belongs to a bot.")?;
     let string = |key: &str| args[key].as_str().unwrap_or_default().to_owned();

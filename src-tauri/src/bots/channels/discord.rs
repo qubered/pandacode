@@ -47,7 +47,7 @@ pub(crate) fn inbound(message: &Value, bot_user: &str) -> Option<(String, String
     Some((author["id"].as_str()?.to_owned(), name, message["channel_id"].as_str()?.to_owned(), text))
 }
 
-pub(crate) async fn run(app: &tauri::AppHandle, channel: &Channel, mut stop: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+pub(crate) async fn run(app: &crate::AppHandle, channel: &Channel, mut stop: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     let token = secrets::get(&channel.id, "token").ok_or("auth:The Discord bot token is missing.")?;
     let gateway = rest(&token, reqwest::Method::GET, "/gateway/bot", None).await?;
     let url = format!("{}/?v=10&encoding=json", gateway["url"].as_str().ok_or("Discord did not return a gateway URL.")?);

@@ -12,7 +12,8 @@ use std::{
         Arc, Mutex,
     },
 };
-use tauri::{AppHandle, Emitter};
+use tauri::Emitter;
+use crate::AppHandle;
 
 // Linux can keep a blocking PTY write asleep after its child exits. The writer
 // must observe close independently, and its destructor must never send input.
@@ -101,6 +102,55 @@ pub struct Terminal {
     closed: Arc<AtomicBool>,
     harness_session: Option<String>,
     run_script: bool,
+    scrollback: Arc<Mutex<Scrollback>>,
+    owner: Option<Owner>,
+}
+
+/// Recent output, so a remote client that reconnects can redraw a live terminal.
+#[derive(Default)]
+struct Scrollback {
+    text: String,
+    /// Bytes ever written; events carry the same count, so a snapshot and the
+    /// events after it join without gaps or repeats.
+    end: u64,
+}
+const SCROLLBACK: usize = 256 * 1024;
+impl Scrollback {
+    fn push(&mut self, data: &str) -> u64 {
+        self.text.push_str(data);
+        self.end += data.len() as u64;
+        if self.text.len() > SCROLLBACK {
+            let mut cut = self.text.len() - SCROLLBACK * 3 / 4;
+            while !self.text.is_char_boundary(cut) {
+                cut += 1;
+            }
+            self.text.drain(..cut);
+        }
+        self.end
+    }
+}
+
+/// What a terminal belongs to, so a reconnecting client can find it again.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Owner {
+    pub project_id: String,
+    pub session_id: Option<String>,
+    /// "shell", "run" (the project's run script) or "harness" (a task's CLI console).
+    pub kind: &'static str,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalInfo {
+    id: String,
+    #[serde(flatten)]
+    owner: Owner,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    data: String,
+    end: u64,
 }
 impl Drop for Terminal {
     fn drop(&mut self) {
@@ -139,6 +189,7 @@ struct TerminalEvent {
     terminal_id: String,
     data: String,
     exit: bool,
+    end: u64,
 }
 
 pub fn start(
@@ -702,6 +753,7 @@ fn start_command(
     let killer = child.clone_killer();
     let shell_pid = child.process_id();
     let reader_closed = closed.clone();
+    let scrollback = Arc::new(Mutex::new(Scrollback::default()));
     drop(pty.slave);
     let id = crate::storage::id();
     registry.insert(
@@ -718,6 +770,8 @@ fn start_command(
             closed,
             harness_session,
             run_script,
+            scrollback: scrollback.clone(),
+            owner: None,
         },
     );
     drop(registry);
@@ -778,24 +832,28 @@ fn start_command(
                     if valid > 0 {
                         let data = String::from_utf8_lossy(&pending[..valid]).to_string();
                         pending.drain(..valid);
+                        let end = scrollback.lock().map(|mut b| b.push(&data)).unwrap_or(0);
                         let _ = app.emit(
                             "terminal-event",
                             TerminalEvent {
                                 terminal_id: tid.clone(),
                                 data,
                                 exit: false,
+                                end,
                             },
                         );
                     }
                     if pending.len() > 4 {
                         let data = String::from_utf8_lossy(&pending).to_string();
                         pending.clear();
+                        let end = scrollback.lock().map(|mut b| b.push(&data)).unwrap_or(0);
                         let _ = app.emit(
                             "terminal-event",
                             TerminalEvent {
                                 terminal_id: tid.clone(),
                                 data,
                                 exit: false,
+                                end,
                             },
                         );
                     }
@@ -808,12 +866,14 @@ fn start_command(
         reader_closed.store(true, Ordering::SeqCst);
         let terminal = registry.lock().ok().and_then(|mut m| m.remove(&tid));
         drop(terminal);
+        let end = scrollback.lock().map(|b| b.end).unwrap_or(0);
         let _ = app.emit(
             "terminal-event",
             TerminalEvent {
                 terminal_id: tid,
                 data: String::new(),
                 exit: true,
+                end,
             },
         );
     });
@@ -827,6 +887,28 @@ fn size(cols: u16, rows: u16) -> PtySize {
         pixel_height: 0,
     }
 }
+pub fn set_owner(terms: &Terminals, id: &str, owner: Owner) -> Result<(), String> {
+    let mut map = terms.lock().map_err(|e| e.to_string())?;
+    map.get_mut(id).ok_or("Terminal not found")?.owner = Some(owner);
+    Ok(())
+}
+
+/// Live terminals and what they belong to (closed ones leave the registry).
+pub fn list(terms: &Terminals) -> Result<Vec<TerminalInfo>, String> {
+    let map = terms.lock().map_err(|e| e.to_string())?;
+    Ok(map
+        .iter()
+        .filter(|(_, terminal)| !terminal.closed.load(Ordering::SeqCst))
+        .filter_map(|(id, terminal)| Some(TerminalInfo { id: id.clone(), owner: terminal.owner.clone()? }))
+        .collect())
+}
+
+pub fn snapshot(terms: &Terminals, id: &str) -> Result<Snapshot, String> {
+    let map = terms.lock().map_err(|e| e.to_string())?;
+    let buffer = map.get(id).ok_or("Terminal not found")?.scrollback.lock().map_err(|e| e.to_string())?;
+    Ok(Snapshot { data: buffer.text.clone(), end: buffer.end })
+}
+
 pub fn write(terms: &Terminals, id: &str, data: &str) -> Result<(), String> {
     if data.len() > 64 * 1024 {
         return Err("Terminal input exceeds 64 KiB.".into());
@@ -1084,6 +1166,8 @@ mod tests {
                 closed,
                 harness_session: None,
                 run_script: false,
+                scrollback: Default::default(),
+                owner: None,
             },
         )])));
         ready_rx
@@ -1356,5 +1440,26 @@ mod platform_tests {
             shell_command(false, &|_| Some(OsString::new()), &|_| None).get_argv()[0],
             "/bin/sh"
         );
+    }
+}
+
+#[cfg(test)]
+mod scrollback_tests {
+    use super::{Scrollback, SCROLLBACK};
+
+    #[test]
+    fn scrollback_keeps_recent_output_on_char_boundaries_and_counts_every_byte() {
+        let mut buffer = Scrollback::default();
+        assert_eq!(buffer.push("héllo"), 6);
+        let line = "ü".repeat(1000);
+        let mut written = 6u64;
+        for _ in 0..400 {
+            written += line.len() as u64;
+            assert_eq!(buffer.push(&line), written);
+        }
+        assert!(buffer.text.len() <= SCROLLBACK);
+        assert!(buffer.text.len() >= SCROLLBACK / 2);
+        assert!(buffer.text.ends_with(&line));
+        assert!(buffer.text.chars().all(|c| c == 'ü'), "trimmed whole characters from the front");
     }
 }

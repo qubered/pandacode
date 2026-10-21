@@ -31,7 +31,7 @@ fn select_material(
     }
 }
 
-pub fn setup(window: &tauri::WebviewWindow) -> Result<(), String> {
+pub fn setup(window: &crate::WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let key = window.ns_window().map_err(|error| error.to_string())? as usize;

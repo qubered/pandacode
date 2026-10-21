@@ -3608,4 +3608,4 @@ const agentUpdates = initializeAgentUpdates({
 });
 window.addEventListener('pagehide', () => agentUpdates.dispose(), { once: true });
 renderThemeToggle(); render(); renderInspector(); run(boot());
-if (!preview) initializeNativeAppearance();
+if (native) initializeNativeAppearance();

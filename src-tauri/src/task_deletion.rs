@@ -92,8 +92,8 @@ pub(crate) fn delete_state(state: &AppState, sid: &str) -> Result<DeletedSession
 
 #[tauri::command]
 pub async fn delete_session(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+    app: crate::AppHandle,
+    window: crate::WebviewWindow,
     session_id: String,
 ) -> Result<DeletedSessions> {
     if window.label() != "main" {

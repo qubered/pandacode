@@ -152,6 +152,7 @@ mod mac {
     pub(crate) fn read_claude(service: &str) -> Result<Option<Vec<u8>>, ()> {
         read(service)
     }
+    #[cfg_attr(feature = "headless", allow(dead_code))]
     pub(crate) fn read_glm() -> Result<Option<Vec<u8>>, ()> {
         read("glm")
     }
@@ -309,7 +310,9 @@ mod mac {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) use mac::{read_claude, read_glm};
+pub(crate) use mac::read_claude;
+#[cfg(all(not(feature = "headless"), target_os = "macos"))]
+pub(crate) use mac::read_glm;
 
 pub fn handle_usage_keychain_helper() -> bool {
     #[cfg(target_os = "macos")]

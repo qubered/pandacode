@@ -97,14 +97,14 @@ fn exec(vms: &Vms, name: &str, args: &Value) -> Result<Value, String> {
 }
 
 /// The task's checkout: its worktree, else its project folder.
-fn checkout(app: &tauri::AppHandle, session_id: &str) -> Option<std::path::PathBuf> {
+fn checkout(app: &crate::AppHandle, session_id: &str) -> Option<std::path::PathBuf> {
     let state = app.state::<crate::AppState>();
     let store = state.store.lock().ok()?;
     let task = store.session(session_id).ok()?;
     task.worktree_path.map(Into::into).or_else(|| store.project(&task.project_id).ok().map(|project| project.path.into()))
 }
 
-fn manage(app: &tauri::AppHandle, session_id: &str, vms: &Vms, args: &Value) -> Result<Value, String> {
+fn manage(app: &crate::AppHandle, session_id: &str, vms: &Vms, args: &Value) -> Result<Value, String> {
     let action = string(args, "action").unwrap_or_default();
     let provider = string(args, "provider").unwrap_or_else(|| "local".into());
     let report = match action.as_str() {
@@ -169,7 +169,7 @@ fn list(vms: &Vms) -> Result<Value, String> {
     }))
 }
 
-async fn dispatch(app: tauri::AppHandle, session_id: String, name: String, args: Value) -> Result<Value, String> {
+async fn dispatch(app: crate::AppHandle, session_id: String, name: String, args: Value) -> Result<Value, String> {
     crate::blocking(move || {
         let vms = app.state::<Vms>();
         let target = || vms.resolve(string(&args, "name").as_deref());
@@ -194,7 +194,7 @@ async fn dispatch(app: tauri::AppHandle, session_id: String, name: String, args:
 }
 
 /// Add the machine tools: local VMs on Apple silicon Macs, cloud sandboxes everywhere.
-pub fn with_vm(base: Option<ToolHost>, app: tauri::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> Option<ToolHost> {
+pub fn with_vm(base: Option<ToolHost>, app: crate::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> Option<ToolHost> {
     let local = cfg!(all(target_os = "macos", target_arch = "aarch64"));
     if !local && !cloud::connections().iter().any(|c| c.connected) {
         return base;

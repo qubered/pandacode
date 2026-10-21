@@ -31,7 +31,7 @@ export interface AgentQuestion { id: string; header?: string; question: string; 
 export type AgentInputRequest = { kind: 'questions'; questions: AgentQuestion[] } | { kind: 'form'; message: string; schema: unknown } | { kind: 'url'; message: string; url: string };
 export type AgentInputResponse = { answers: Record<string, string[]> } | { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> | null };
 export interface AgentEvent { sessionId: string; kind: 'limited' | 'turn_changes' | 'task_settings' | 'goal_ready' | 'goal_input' | 'goal' | 'turn_start' | 'turn_complete' | 'commands_changed' | 'message_start' | 'text' | 'tool' | 'subagent' | 'status' | 'approval' | 'approval_cancelled' | 'input_request' | 'input_cancelled' | 'error' | 'done' | 'session' | 'usage'; text: string; requestId?: string; data?: unknown; tool?: ToolActivity; }
-export interface TerminalEvent { terminalId: string; data: string; exit?: boolean; }
+export interface TerminalEvent { terminalId: string; data: string; exit?: boolean; end?: number; }
 export interface Metrics { coreRssBytes: number; activeAgents: number; activeTerminals: number; databaseBytes: number; }
 export interface LocalServer { port: number; process: string; url: string; }
 export interface BrowserBounds { x: number; y: number; width: number; height: number; }
