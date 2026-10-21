@@ -3,7 +3,12 @@ import type { AgentEvent, BrowserElement, BrowserStatus, TerminalEvent } from '.
 // Remote mode (`?core=ws://host:port`): a plain browser page driving a headless core over
 // a WebSocket. It is neither the preview fixtures nor Tauri, so `preview` stays false and
 // code that needs the native shell checks `native`.
-const remoteUrl = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('core');
+const remoteUrl = typeof location === 'undefined' ? null : coreUrl(new URLSearchParams(location.search).get('core'));
+/** Only a WebSocket address counts; anything else leaves the page in its normal mode. */
+function coreUrl(value: string | null): string | null {
+  if (!value) return null;
+  try { const url = new URL(value); return url.protocol === 'ws:' || url.protocol === 'wss:' ? url.href : null; } catch { return null; }
+}
 export const remote = !!remoteUrl;
 export const preview = !remote && !('__TAURI_INTERNALS__' in window);
 export const native = !remote && !preview;
@@ -22,7 +27,11 @@ async function pickRemote(options: import('./remote-picker').PickOptions): Promi
 // Remote commands that act on this machine instead of the core: a link opens here, not on the
 // server. Runs before any await so the browser still sees the click that asked for it.
 const LOCAL_IN_REMOTE: Record<string, (args: Record<string, unknown>) => unknown> = {
-  open_external_url: args => { window.open(String(args.url), '_blank', 'noopener,noreferrer'); },
+  open_external_url: args => {
+    const url = new URL(String(args.url));
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Use an HTTP or HTTPS URL.');
+    window.open(url.href, '_blank', 'noopener,noreferrer');
+  },
   open_support: () => { window.open('https://github.com/aicodeking/pandacode/issues', '_blank', 'noopener,noreferrer'); },
 };
 export async function call<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
