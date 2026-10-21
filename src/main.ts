@@ -22,7 +22,7 @@ import { renderTurnChanges, changeRequest, captureChangeCards, restoreChangeCard
 import { mountWallpapers } from './wallpapers';
 import type { AgentEvent, BrowserAttachment, ContextUsage, FileEntry, GitStatus, Message, MessagePage, Mode, Project, Provider, ProviderId, ProviderModel, Session, TaskLink, ToolActivity, TurnChanges } from './types';
 import type { BrowserPanel } from './browser';
-import { call, chooseFolder, preview, subscribe } from './bridge';
+import { call, chooseFolder, native, onCoreReconnect, onCoreStatus, preview, remote, subscribe } from './bridge';
 import { $, button, escape, icon, markdown, morph } from './dom';
 import { bindMessageActions, messageActionsHtml } from './message-actions';
 import { providerLogo } from './provider-logos';
@@ -468,7 +468,7 @@ async function instruction(task: Session, text: string): Promise<void> {
   prompt.value = text; state.drafts.set(task.id, text); await send();
 }
 async function exportTask(task: Session, name?: string): Promise<void> {
-  if (!preview) {
+  if (native) {
     const path = await (await import('@tauri-apps/plugin-dialog')).save({ title: 'Export task', defaultPath: name || `${task.title.replace(/[^a-z0-9 -]/gi, '').slice(0, 80) || 'task'}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
     if (path) { await call('save_task_export', { sessionId: task.id, path }); notify('Task exported'); }
     return;
@@ -3524,6 +3524,20 @@ async function boot(): Promise<void> {
   window.addEventListener(TEAM_MODE_EVENT, () => { if (session()) renderComposer(); });
   await subscribe('sessions-deleted', event => removeDeletedSessions(event.sessionIds));
   await subscribe('sessions-changed', () => run(reloadSessions()));
+  // Remote mode: the core keeps working while the socket is down; reload what changed meanwhile.
+  if (remote) {
+    let lost = false;
+    run(onCoreStatus(status => {
+      if (status === 'closed' && !lost) { lost = true; notify('Lost the connection to the PandaCode core. Reconnecting…'); }
+      else if (status === 'open' && lost) { lost = false; notify('Reconnected to the PandaCode core'); }
+    }).then(() => undefined));
+    run(onCoreReconnect(() => run((async () => {
+      await reloadSessions();
+      const id = state.sessionId; if (!id) return;
+      const page = await latestMessagePage(id);
+      if (id === state.sessionId) { setMessagePage(page); render(); }
+    })())).then(() => undefined));
+  }
   // An agent booted or asked to show a simulator: bring the panel forward.
   // An agent started or asked to show a VM: bring the panel forward.
   run(subscribe('vm-changed', event => { if (event && !Array.isArray(event) && event.show) openVm(); void vmPanel?.refresh(); }).then(() => undefined));

@@ -1,4 +1,10 @@
-# PandaCode
+# PandaCode (remote-core fork)
+
+> **This is a fork of PandaCode** — upstream: <https://github.com/aicodeking/pandacode>.
+> It adds a *remote* mode: the Rust core runs headless on a server and the
+> frontend connects to it over a WebSocket (open the app with
+> `?core=ws://host:port`). See [docs/remote-core.md](docs/remote-core.md).
+> Everything below is upstream's README.
 
 A small, native desktop workspace for coding agents. PandaCode runs the coding
 CLIs you already use — **Claude Code, Codex, Kimi Code, OpenCode, GLM Coding

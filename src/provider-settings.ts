@@ -1,5 +1,5 @@
 import './provider-settings.css';
-import { call, preview } from './bridge';
+import { call, chooseFile, preview } from './bridge';
 import { escape, icon } from './dom';
 import { providerLogo } from './provider-logos';
 import { infoMark } from './tooltip';
@@ -173,7 +173,7 @@ export function mountProviderSettings(host: HTMLElement, saved: () => Promise<un
       event.preventDefault();
       if (preview) { message('Choose executable is available in the desktop app.'); return; }
       try {
-        const path = await (await import('@tauri-apps/plugin-dialog')).open({ directory: false, multiple: false, title: 'Choose agent executable' });
+        const path = await chooseFile('Choose agent executable');
         if (!disposed && typeof path === 'string') {
           const input = host.querySelector<HTMLInputElement>(`[data-executable="${target.dataset.chooseExecutable}"]`)!;
           input.value = path; editedPaths.add(input);

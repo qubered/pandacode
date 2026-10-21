@@ -4,8 +4,8 @@
  * once no agent is working and the window has been idle for a while, so a restart never
  * cuts a run short. Every download is verified against the public key built into the
  * app before it installs. The request carries no personal data, and turning automatic
- * updates off in Settings → About stops it. The browser preview never checks. */
-import { preview } from './bridge';
+ * updates off in Settings → About stops it. The browser preview and remote mode never check. */
+import { native } from './bridge';
 import { CHECK_EVERY, readyToRestart, type UpdateState } from './app-updates-policy';
 export { describeUpdate, type UpdateState } from './app-updates-policy';
 
@@ -35,7 +35,7 @@ export const appUpdates = (): AppUpdates | undefined => instance;
 
 export function startAppUpdates(host: UpdatesHost): AppUpdates {
   const listeners = new Set<() => void>();
-  let state: UpdateState = preview ? { kind: 'off' } : { kind: 'idle' };
+  let state: UpdateState = !native ? { kind: 'off' } : { kind: 'idle' };
   let automatic = (() => { try { return localStorage.getItem(KEY) !== 'off'; } catch { return true; } })();
   let pending: Pending | null = null, lastCheck = 0, lastInput = Date.now(), checking: Promise<void> | null = null;
   const set = (next: UpdateState) => { state = next; listeners.forEach(listener => listener()); };
@@ -52,7 +52,7 @@ export function startAppUpdates(host: UpdatesHost): AppUpdates {
   }
 
   async function run(): Promise<void> {
-    if (preview || state.kind === 'downloading' || state.kind === 'ready' || state.kind === 'installing') return;
+    if (!native || state.kind === 'downloading' || state.kind === 'ready' || state.kind === 'installing') return;
     lastCheck = Date.now();
     set({ kind: 'checking' });
     try {
@@ -80,7 +80,7 @@ export function startAppUpdates(host: UpdatesHost): AppUpdates {
     } catch (cause) { set({ kind: 'error', message: message(cause) }); }
   }
 
-  if (!preview) {
+  if (native) {
     const input = () => { lastInput = Date.now(); };
     for (const name of ['pointerdown', 'keydown', 'wheel']) addEventListener(name, input, { passive: true, capture: true });
     window.setTimeout(() => { if (automatic) void check(); }, FIRST_CHECK);
@@ -93,7 +93,7 @@ export function startAppUpdates(host: UpdatesHost): AppUpdates {
   instance = {
     get state() { return state; },
     get automatic() { return automatic; },
-    supported: !preview,
+    supported: native,
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
     setAutomatic(on) {
       automatic = on;

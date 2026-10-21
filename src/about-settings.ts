@@ -1,4 +1,4 @@
-import { preview } from './bridge';
+import { call, preview, remote } from './bridge';
 import { icon } from './dom';
 import { appUpdates, describeUpdate } from './app-updates';
 
@@ -20,6 +20,7 @@ export function aboutSettingsHtml(): string {
     <div class="setting-row"><div><strong>License</strong><small>Open source (MIT-based). No account, no telemetry.</small></div>${link('PandaCode License', PROJECT_LINKS.license)}</div>
     <div class="setting-row settings-updates"><div><strong>Updates</strong><small class="settings-update-status" aria-live="polite">Checks GitHub Releases automatically.</small></div><div class="settings-row-actions"><button type="button" class="secondary-button settings-update-action" hidden></button>${link('Releases', PROJECT_LINKS.releases)}</div></div>
     <div class="setting-row settings-updates-auto"><div><strong>Install updates automatically</strong><small>Downloads in the background and restarts when no agent is working.</small></div><input type="checkbox" class="settings-switch" data-update-automatic aria-label="Install updates automatically"></div>
+    <div class="setting-row"><div><strong>Remote-core fork</strong><small>This is a fork of PandaCode.</small></div>${link('Upstream PandaCode', PROJECT_LINKS.repository)}</div>
     <div class="setting-row"><div><strong>Source code</strong><small>Report bugs and follow development.</small></div><div class="settings-row-actions">${link('GitHub repository', PROJECT_LINKS.repository)}${link('Issues', PROJECT_LINKS.issues)}</div></div>
   </div>`;
 }
@@ -27,6 +28,7 @@ export function aboutSettingsHtml(): string {
 /** Reads the bundle version from Tauri; the browser preview has no app bundle. */
 async function appVersion(): Promise<string> {
   if (preview) return 'Preview';
+  if (remote) return `${(await call<{ version: string }>('core_info')).version} · remote core`;
   return (await import('@tauri-apps/api/app')).getVersion();
 }
 

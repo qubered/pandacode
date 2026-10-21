@@ -1,5 +1,5 @@
 import './attachments.css';
-import { call, chooseAttachmentFolder, chooseAttachments, preview } from './bridge';
+import { call, chooseAttachmentFolder, chooseAttachments, native } from './bridge';
 import { escape, icon } from './dom';
 
 /** Inputs the user adds to one message: images travel as native image blocks,
@@ -212,7 +212,7 @@ export function mountPromptAttachments(host: AttachmentsHost) {
       // Open dialogs (moodboards, settings) own their drops.
       const accepting = () => Boolean(host.taskId()) && !document.querySelector('dialog[open]');
       const setActive = (active: boolean) => zone()?.classList.toggle('drop-active', active && accepting());
-      if (preview) {
+      if (!native) {
         let depth = 0;
         document.addEventListener('dragenter', event => { if (event.dataTransfer?.types.includes('Files')) { depth++; setActive(true); } });
         document.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; setActive(false); } });
