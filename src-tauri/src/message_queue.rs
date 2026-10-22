@@ -154,9 +154,13 @@ pub async fn queue_list(state: State<'_, AppState>, session_id: Option<String>) 
 }
 
 #[tauri::command]
-pub async fn queue_add(state: State<'_, AppState>, session_id: String, text: String, attachments: Option<serde_json::Value>) -> Result<QueuedMessage> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    add(&store, &session_id, &text, &attachments.unwrap_or_else(|| serde_json::json!([])))
+pub async fn queue_add(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, text: String, attachments: Option<serde_json::Value>) -> Result<QueuedMessage> {
+    let entry = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        add(&store, &session_id, &text, &attachments.unwrap_or_else(|| serde_json::json!([])))?
+    };
+    crate::orchestrator::hooks::notify(&app, &session_id, crate::orchestrator::hooks::Event::HumanMessage { text, delivery: "queue".into() });
+    Ok(entry)
 }
 
 #[tauri::command]
@@ -194,8 +198,10 @@ pub async fn queue_restore(state: State<'_, AppState>, entry: QueuedMessage) -> 
 /// The user's `steer_task` from the UI; orchestrator tools call `steer_task_inner` directly
 /// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
-pub async fn steer_task(state: State<'_, AppState>, session_id: String, text: String) -> Result<()> {
-    steer_task_inner(state, session_id, text).await
+pub async fn steer_task(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, text: String) -> Result<()> {
+    steer_task_inner(state, session_id.clone(), text.clone()).await?;
+    crate::orchestrator::hooks::notify(&app, &session_id, crate::orchestrator::hooks::Event::HumanMessage { text, delivery: "steer".into() });
+    Ok(())
 }
 pub(crate) async fn steer_task_inner(state: State<'_, AppState>, session_id: String, text: String) -> Result<()> {
     let text = text.trim().to_owned();

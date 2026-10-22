@@ -1083,7 +1083,10 @@ async fn prepare_command(
 /// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
 async fn send_message(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, text: String, image_ids: Option<Vec<String>>, moodboard_ids: Option<Vec<String>>) -> Result<()> {
-    send_message_inner(app, state, session_id, text, image_ids, moodboard_ids).await
+    let (hook_app, hook_session, hook_text) = (app.clone(), session_id.clone(), text.clone());
+    send_message_inner(app, state, session_id, text, image_ids, moodboard_ids).await?;
+    orchestrator::hooks::notify(&hook_app, &hook_session, orchestrator::hooks::Event::HumanMessage { text: hook_text, delivery: "message".into() });
+    Ok(())
 }
 pub(crate) async fn send_message_inner(
     app: crate::AppHandle,
@@ -1651,6 +1654,9 @@ async fn launch_operation_admitted(
                             bots::approval_requested(&app_sink, &e.session_id, request_id, &e.text);
                         }
                     }
+                    if saved.is_ok() && matches!(e.kind.as_str(), "approval" | "input_request") {
+                        orchestrator::hooks::needs_response(&app_sink, &e);
+                    }
                     saved
                 } else {
                     store_sink
@@ -1917,6 +1923,19 @@ async fn launch_operation_admitted(
         if !was_stopped {
             bots::run_finished(&app, &session_id, successful);
         }
+        // Tell the orchestrator supervising this task; it reads the final reply and changed files itself.
+        orchestrator::hooks::notify(
+            &app,
+            &session_id,
+            orchestrator::hooks::Event::Finished {
+                outcome: if was_stopped { "stopped" } else if successful { "done" } else { "failed" }.into(),
+                final_reply: String::new(),
+                changed_files: Vec::new(),
+            },
+        );
+        if successful && !was_stopped {
+            orchestrator::tools::drain_next(&app, &session_id);
+        }
         // Keep Start blocked until the old run's final event has been queued.
         // Otherwise its delayed `done` can finish a newly started UI stream.
         drop(children);
@@ -1979,8 +1998,10 @@ async fn stop_session(
 /// The user's `respond_approval` from the UI; orchestrator tools call `respond_approval_inner` directly
 /// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
-async fn respond_approval(state: State<'_, AppState>, session_id: String, request_id: String, approved: bool) -> Result<()> {
-    respond_approval_inner(state, session_id, request_id, approved).await
+async fn respond_approval(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, request_id: String, approved: bool) -> Result<()> {
+    respond_approval_inner(state, session_id.clone(), request_id.clone(), approved).await?;
+    orchestrator::hooks::notify(&app, &session_id, orchestrator::hooks::Event::HumanResponded { request_id, approved: Some(approved), answer: None });
+    Ok(())
 }
 pub(crate) async fn respond_approval_inner(
     state: State<'_, AppState>,
@@ -2013,8 +2034,11 @@ async fn list_provider_models(provider: String, force: Option<bool>) -> Result<V
 /// The user's `respond_user_input` from the UI; orchestrator tools call `respond_user_input_inner` directly
 /// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
-async fn respond_user_input(state: State<'_, AppState>, session_id: String, request_id: String, response: serde_json::Value) -> Result<()> {
-    respond_user_input_inner(state, session_id, request_id, response).await
+async fn respond_user_input(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, request_id: String, response: serde_json::Value) -> Result<()> {
+    let answer = response.to_string();
+    respond_user_input_inner(state, session_id.clone(), request_id.clone(), response).await?;
+    orchestrator::hooks::notify(&app, &session_id, orchestrator::hooks::Event::HumanResponded { request_id, approved: None, answer: Some(answer) });
+    Ok(())
 }
 pub(crate) async fn respond_user_input_inner(
     state: State<'_, AppState>,
