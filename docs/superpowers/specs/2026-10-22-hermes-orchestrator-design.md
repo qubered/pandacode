@@ -126,6 +126,8 @@ delivers the next queued entry itself, as bot tasks do.
   - The user can always answer. Hermes can answer only while it supervises.
   - Nothing is auto-approved on a timeout.
 - **Messages:** the user may message or steer any task. That does not change the supervisor.
+  The orchestrator may message only tasks whose mode is within `maxMode`. Otherwise a
+  message to the user's Full access task would run without the approvals the ceiling keeps.
 - **Mode ceiling:** `maxMode`, default `auto`.
 
 ## Section 3: webhooks (Hermes "Generic V2")

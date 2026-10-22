@@ -21,7 +21,8 @@ You keep using PandaCode as usual on the same tasks. Design:
 - **Highest mode:** Hermes cannot start tasks above this setting. The default is Accept
   edits: file edits, and shell commands the agent CLI considers safe, run without asking,
   while other commands still ask. Hermes can always choose **Ask** mode for a task, so
-  every command needs an answer.
+  every command needs an answer. Hermes cannot message tasks running above this setting
+  (such as your Full access tasks), so it can't use them to get around it.
 - **Queued messages:** on supervised tasks, PandaCode delivers them itself. They go out
   even when no PandaCode window is open.
 

@@ -58,7 +58,7 @@ pub fn catalog() -> Vec<Value> {
             "mode": {"type": "string", "enum": crate::orchestrator::MODES},
             "worktreeBranch": {"type": "string", "maxLength": 200, "description": "New branch name for a separate worktree checkout."}
         }), &["projectId", "prompt"]),
-        tool("send_message", "Send a message to a task as you. An idle task starts a turn with it (delivered: started). While the task is running, delivery \"queue\" (default) sends it after the current run ends cleanly (delivered: queued), and \"steer\" adds it to the running turn now (delivered: steered); agents that cannot steer get it queued instead. Queued messages wait while a task is stopped or failed, until it is resumed.", json!({
+        tool("send_message", "Send a message to a task as you. An idle task starts a turn with it (delivered: started). While the task is running, delivery \"queue\" (default) sends it after the current run ends cleanly (delivered: queued), and \"steer\" adds it to the running turn now (delivered: steered); agents that cannot steer get it queued instead. Queued messages wait while a task is stopped or failed, until it is resumed. Refused for tasks whose mode is above your highest allowed mode.", json!({
             "taskId": task,
             "text": {"type": "string", "minLength": 1, "maxLength": TEXT_BYTES},
             "delivery": {"type": "string", "enum": ["queue", "steer"]}
@@ -582,11 +582,23 @@ fn queue(app: &AppHandle, session_id: &str, text: &str, sender: &str) -> Result<
     Ok(())
 }
 
+/// The orchestrator may only drive a task whose mode is within its ceiling: a message to a
+/// task in a higher mode (such as the user's Full access task) would run without the approvals
+/// the ceiling exists to keep.
+fn mode_allowed(task_mode: &str, max_mode: &str) -> Result<()> {
+    if super::clamp_mode(Some(task_mode), max_mode, max_mode).1 {
+        return Err(format!("This task runs in {task_mode} mode, above the highest mode allowed for the orchestrator ({max_mode}). Ask the user to lower its mode or send the message themselves."));
+    }
+    Ok(())
+}
+
 async fn send_message(app: &AppHandle, args: &Value) -> Result<Value> {
-    let name = super::settings(app).name;
+    let settings = super::settings(app);
+    let name = settings.name;
     let id = string(args, "taskId");
     let text = args["text"].as_str().unwrap_or_default().to_owned();
-    lock(&app.state::<AppState>().store)?.session(&id)?;
+    let task = lock(&app.state::<AppState>().store)?.session(&id)?;
+    mode_allowed(&task.mode, &settings.max_mode)?;
     if !is_running(app, &id)? {
         let before = latest_user_message(app, &id)?;
         match crate::send_message_inner(app.clone(), app.state::<AppState>(), id.clone(), text.clone(), None, None).await {
@@ -1014,6 +1026,21 @@ mod tests {
         std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/feature/x\n").unwrap();
         assert_eq!(head_branch(&dir).as_deref(), Some("feature/x"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::mode_allowed;
+
+    #[test]
+    fn messages_are_refused_for_tasks_above_the_ceiling() {
+        assert!(mode_allowed("full", "auto").unwrap_err().contains("above the highest mode"));
+        assert!(mode_allowed("auto", "ask").is_err());
+        assert!(mode_allowed("auto", "auto").is_ok());
+        assert!(mode_allowed("ask", "auto").is_ok());
+        assert!(mode_allowed("plan", "plan").is_ok());
+        assert!(mode_allowed("full", "full").is_ok());
     }
 }
 
