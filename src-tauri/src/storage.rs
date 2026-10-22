@@ -658,6 +658,34 @@ impl Store {
         self.attach_links(&mut sessions)?;
         Ok(sessions)
     }
+    /// Tasks for the orchestrator's `list_tasks`, newest activity first. Drafts, archived
+    /// tasks and architect workers are left out. `supervisor` is None for any supervisor,
+    /// `Some(None)` for tasks the user supervises, `Some(Some(name))` for that orchestrator's.
+    #[allow(dead_code)] // Called by orchestrator tools; see the note in orchestrator/tools.rs.
+    pub fn list_tasks_filtered(&self, project_id: Option<&str>, status: Option<&str>, supervisor: Option<Option<&str>>, limit: usize) -> Result<Vec<Session>> {
+        let mut stmt = self.db.prepare("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,substr(task_description,1,512),completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor FROM sessions
+            WHERE draft=0 AND archived=0 AND id NOT IN (SELECT session_id FROM architect_workers)
+              AND (?1 IS NULL OR project_id=?1) AND (?2 IS NULL OR status=?2) AND (?3=0 OR supervisor IS ?4)
+            ORDER BY updated_at DESC,id LIMIT ?5").map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![project_id, status, supervisor.is_some(), supervisor.flatten(), limit as i64], Self::session_row)
+            .map_err(|e| e.to_string())?;
+        let mut sessions = rows.collect::<std::result::Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        self.attach_links(&mut sessions)?;
+        Ok(sessions)
+    }
+
+    /// Per project: (running, waiting, total) over the tasks `list_tasks_filtered` would list.
+    #[allow(dead_code)] // Called by orchestrator tools; see the note in orchestrator/tools.rs.
+    pub fn project_task_counts(&self) -> Result<std::collections::HashMap<String, (i64, i64, i64)>> {
+        let mut stmt = self.db.prepare("SELECT project_id,SUM(status='running'),SUM(status='waiting'),COUNT(*) FROM sessions
+            WHERE draft=0 AND archived=0 AND id NOT IN (SELECT session_id FROM architect_workers) GROUP BY project_id").map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?))))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<std::result::Result<_, _>>().map_err(|e| e.to_string())
+    }
+
     /// Sets or clears (None) the orchestrator supervising a task.
     pub fn set_supervisor(&self, sid: &str, supervisor: Option<&str>) -> Result<Session> {
         let changed = self
