@@ -330,7 +330,7 @@ async fn build(dir: PathBuf, refresh: bool) -> crate::Result<std::sync::Arc<Ledg
 }
 
 #[tauri::command]
-pub(crate) async fn usage_ledger(app: tauri::AppHandle, window: tauri::WebviewWindow, refresh: Option<bool>) -> crate::Result<Ledger> {
+pub(crate) async fn usage_ledger(app: crate::AppHandle, window: crate::WebviewWindow, refresh: Option<bool>) -> crate::Result<Ledger> {
     if window.label() != "main" {
         return Err("Usage estimates are available only in the main application window.".into());
     }

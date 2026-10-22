@@ -29,7 +29,7 @@ fn shortcut_backend_notice(available: bool, wayland: bool) -> Option<String> {
     }
 }
 
-fn shortcut_backend(app: &tauri::AppHandle) -> Result<State<'_, GlobalShortcut<tauri::Wry>>> {
+fn shortcut_backend(app: &crate::AppHandle) -> Result<State<'_, GlobalShortcut<tauri::Wry>>> {
     // GlobalShortcutExt::global_shortcut uses state(), which panics when the
     // optional backend could not initialize (for example, on native Wayland).
     app.try_state::<GlobalShortcut<tauri::Wry>>()
@@ -201,7 +201,7 @@ fn change_registration(
     Ok(())
 }
 
-pub fn setup(app: &tauri::AppHandle, dir: &Path) -> Result<()> {
+pub fn setup(app: &crate::AppHandle, dir: &Path) -> Result<()> {
     let path = dir.join("overlay.json");
     let mut preferences = match std::fs::read(&path) {
         Ok(bytes) => {
@@ -302,7 +302,7 @@ pub async fn overlay_preferences(state: State<'_, OverlayState>) -> Result<Prefe
 }
 #[tauri::command]
 pub async fn overlay_save_preferences(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, OverlayState>,
     enabled: bool,
     shortcut: String,
@@ -346,7 +346,7 @@ pub async fn overlay_save_preferences(
 }
 #[tauri::command]
 pub async fn overlay_recording(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, OverlayState>,
     active: bool,
 ) -> Result<()> {
@@ -456,7 +456,7 @@ fn select_model(
     *preferences = next;
     Ok(preferences.effective_context())
 }
-fn hide(app: &tauri::AppHandle) -> Result<()> {
+fn hide(app: &crate::AppHandle) -> Result<()> {
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.emit("overlay-visibility", false);
         window.hide().map_err(|e| e.to_string())?;
@@ -464,10 +464,10 @@ fn hide(app: &tauri::AppHandle) -> Result<()> {
     Ok(())
 }
 #[tauri::command]
-pub fn overlay_hide(app: tauri::AppHandle) -> Result<()> {
+pub fn overlay_hide(app: crate::AppHandle) -> Result<()> {
     hide(&app)
 }
-fn toggle(app: &tauri::AppHandle) -> Result<()> {
+fn toggle(app: &crate::AppHandle) -> Result<()> {
     if let Some(window) = app.get_webview_window(LABEL) {
         if window.is_visible().unwrap_or(false) {
             return hide(app);
@@ -516,7 +516,7 @@ fn toggle(app: &tauri::AppHandle) -> Result<()> {
     window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }
-fn position_near_cursor(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
+fn position_near_cursor(app: &crate::AppHandle, window: &crate::WebviewWindow) {
     let monitor = app
         .cursor_position()
         .ok()
@@ -537,7 +537,7 @@ fn position_near_cursor(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
     }
 }
 #[tauri::command]
-pub async fn overlay_toggle(app: tauri::AppHandle) -> Result<()> {
+pub async fn overlay_toggle(app: crate::AppHandle) -> Result<()> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
@@ -912,7 +912,7 @@ pub async fn overlay_thread(
 
 #[tauri::command]
 pub async fn overlay_launch(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     overlay: State<'_, OverlayState>,
     prompt: String,
@@ -1077,7 +1077,7 @@ fn open_target(
 }
 #[tauri::command]
 pub async fn overlay_open_task(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     subagent_id: Option<String>,

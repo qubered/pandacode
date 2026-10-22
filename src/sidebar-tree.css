@@ -62,12 +62,15 @@ html[data-theme] .sidebar .new-task-button>.icon{color:var(--focus)}
 .sidebar .task-item[data-activity=inactive] .task-title{color:color-mix(in srgb,var(--text) 82%,var(--muted))}
 .sidebar .task-item:hover .task-title,.sidebar .task-item.selected .task-title{color:var(--text)}
 .sidebar .task-meta{font-size:.74rem;color:var(--muted)}
-.sidebar .task-meta:not(:has(.task-branch,.task-link,.task-pin,.task-worktree)){min-height:0}
+.sidebar .task-meta:not(:has(.task-branch,.task-link,.task-supervisor,.task-pin,.task-worktree)){min-height:0}
 .sidebar .task-branch{display:inline-flex;align-items:center;gap:5px;flex:0 1 auto;min-width:0;overflow:hidden}
 .sidebar .task-branch>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sidebar .task-branch .icon{flex:none;width:12px;height:12px;opacity:.8}
 .sidebar .task-branch .task-worktree .icon{width:12px;height:12px}
 .sidebar .task-link{flex:none;font-weight:600;font-variant-numeric:tabular-nums}
+/* A task an orchestrator such as Hermes supervises: a small accent pill with its name. */
+.sidebar .task-supervisor{flex:none;max-width:7rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 6px;border-radius:3px;background:rgb(var(--accent-rgb) / .16);color:var(--accent-ink);font-size:.66rem;font-weight:600;line-height:16px}
+html[data-theme=dark] .sidebar .task-supervisor{color:var(--accent)}
 .sidebar .task-link.pull{color:#a78bfa}
 .sidebar .task-link.issue{color:var(--success)}
 html:not([data-theme=dark]) .sidebar .task-link.pull{color:#7c3aed}

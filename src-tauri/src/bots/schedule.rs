@@ -192,7 +192,7 @@ pub(crate) fn advance_heartbeat(store: &Store, bot: &Bot, now: i64) -> Result<()
 pub(crate) const HEARTBEAT_PROMPT: &str = "Check-in: review your standing goals and what you remember. Use read-only steps only (reading files, pages or connected data); do not send messages, change data or spend money without asking. If something needs the user's attention or a decision, say so briefly and propose the next step.";
 
 /// Scheduler loop: every 30 seconds, start due schedules and check-ins as bot turns.
-pub(crate) fn start(app: tauri::AppHandle) {
+pub(crate) fn start(app: crate::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
@@ -225,28 +225,28 @@ pub(crate) fn start(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-pub async fn bot_schedule_create(app: tauri::AppHandle, state: State<'_, AppState>, bot_id: String, input: ScheduleInput) -> Result<Schedule> {
+pub async fn bot_schedule_create(app: crate::AppHandle, state: State<'_, AppState>, bot_id: String, input: ScheduleInput) -> Result<Schedule> {
     let schedule = create(&*state.store.lock().map_err(|e| e.to_string())?, &bot_id, &input, "user", crate::storage::now())?;
     let _ = app.emit("bots-changed", ());
     Ok(schedule)
 }
 
 #[tauri::command]
-pub async fn bot_schedule_set_enabled(app: tauri::AppHandle, state: State<'_, AppState>, schedule_id: String, enabled: bool) -> Result<Schedule> {
+pub async fn bot_schedule_set_enabled(app: crate::AppHandle, state: State<'_, AppState>, schedule_id: String, enabled: bool) -> Result<Schedule> {
     let schedule = set_enabled(&*state.store.lock().map_err(|e| e.to_string())?, &schedule_id, enabled, crate::storage::now())?;
     let _ = app.emit("bots-changed", ());
     Ok(schedule)
 }
 
 #[tauri::command]
-pub async fn bot_schedule_delete(app: tauri::AppHandle, state: State<'_, AppState>, bot_id: String, schedule_id: String) -> Result<()> {
+pub async fn bot_schedule_delete(app: crate::AppHandle, state: State<'_, AppState>, bot_id: String, schedule_id: String) -> Result<()> {
     delete(&*state.store.lock().map_err(|e| e.to_string())?, &bot_id, &schedule_id)?;
     let _ = app.emit("bots-changed", ());
     Ok(())
 }
 
 #[tauri::command]
-pub async fn bot_run_schedule_now(app: tauri::AppHandle, state: State<'_, AppState>, schedule_id: String) -> Result<()> {
+pub async fn bot_run_schedule_now(app: crate::AppHandle, state: State<'_, AppState>, schedule_id: String) -> Result<()> {
     let schedule = get(&*state.store.lock().map_err(|e| e.to_string())?, &schedule_id)?;
     gateway::run_scheduled(&app, &schedule.bot_id, &format!("Run now: {}", schedule.title), &schedule.prompt).await
 }

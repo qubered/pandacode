@@ -14,7 +14,7 @@ pub(crate) fn worker_note() -> String {
     format!("No output for {SILENCE_MINUTES} minutes, so PandaCode stopped this worker. Inspect its conversation before retrying.")
 }
 
-pub(crate) fn watch(app: tauri::AppHandle) {
+pub(crate) fn watch(app: crate::AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(CHECK_EVERY).await;

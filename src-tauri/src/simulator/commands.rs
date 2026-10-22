@@ -1,6 +1,7 @@
 //! IPC for the inspector's Simulator panel. The window shows one device at a time.
 use std::time::Duration;
-use tauri::{ipc::Response, AppHandle, Manager};
+use tauri::{ipc::Response, Manager};
+use crate::AppHandle;
 
 use super::{duo::Pose, Input, Simulators, Status};
 use crate::Result;

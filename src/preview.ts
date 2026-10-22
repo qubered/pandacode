@@ -6,6 +6,7 @@ import { isPreviewableFile } from './file-links';
 import type { CommandPanel, GoalState } from './command-center';
 import { createPreviewArchitect } from './preview-architect';
 import { createPreviewCloud, createPreviewVm } from './preview-vm';
+import { createPreviewOrchestrator } from './preview-orchestrator';
 import { createPreviewTurnChanges } from './preview-turn-changes';
 // Bundled with the preview, not lazily imported: a late module load during a paused test clock stalled startup.
 import { invokeBots } from './preview-bots';
@@ -63,6 +64,8 @@ for (const s of sessions) {
 }
 loadThreadOrder();
 // One sample task already tracks a GitHub issue so chips have something to show.
+// One sample task is supervised by Hermes, with a message Hermes sent.
+sessions[3].supervisor = 'hermes';
 sessions[2].issue = { kind: 'issue', number: 131, url: 'https://github.com/orbit-labs/orbit/issues/131', title: 'Keyboard shortcut cheat sheet', state: 'open', checkedAt: now };
 let id = 10;
 let previewClaudeMode: 'inherit' | 'subscription' = 'inherit';
@@ -74,7 +77,7 @@ const messages: Record<string, Message[]> = { 'session-1': [
   { id: 5, sessionId: 'session-1', role: 'tool', content: encodeTool({ id: 'sample-bash', name: 'Bash', status: 'completed', input: 'npm test -- --runInBand', output: sampleTestOutput }), createdAt: now - 290000 },
   { id: 7, sessionId: 'session-1', role: 'tool', content: 'Legacy tool report\nOlder saved output remains readable.', createdAt: now - 280000 },
   { id: 8, sessionId: 'session-1', role: 'tool', content: 'Tool finished', createdAt: now - 270000 },
-], 'session-4': [{ id: 6, sessionId: 'session-4', role: 'assistant', content: 'The project is a small native workspace for coding agents.', createdAt: now - 259200000 }] };
+], 'session-4': [{ id: 9, sessionId: 'session-4', role: 'user', sender: 'hermes', content: 'Summarize what this project does.', createdAt: now - 259300000 }, { id: 6, sessionId: 'session-4', role: 'assistant', content: 'The project is a small native workspace for coding agents.', createdAt: now - 259200000 }] };
 const providers: Provider[] = [
   { id: 'claude', name: 'Claude Code', installed: true, path: '/sample/bin/claude', version: 'Sample provider', models: ['sonnet', 'opus', 'haiku'].map(id => fallbackModel('claude', id)) },
   { id: 'codex', name: 'Codex', installed: true, path: '/sample/bin/codex', version: 'Sample provider', models: [] },
@@ -217,6 +220,7 @@ const previewGithub = (() => {
 /** A pretend iOS Simulator: two devices and a drawn home screen that answers taps. */
 const previewVm = createPreviewVm();
 const previewCloud = createPreviewCloud();
+const previewOrchestrator = createPreviewOrchestrator();
 const previewSimulator = (() => {
   const devices: { udid: string; name: string; runtime: string; state: string; family: string; deviceType: string; platform?: string; duo?: boolean }[] = [
     { udid: '3720D4A0-B8C5-4DAC-9425-6A4685BC533E', name: 'iPhone 17 Pro', runtime: 'iOS 26.2', state: 'Booted', family: 'phone', deviceType: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro' },
@@ -821,6 +825,17 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
     case 'resolve_agent_ui_action': break;
     case 'open_external_url': { const url = new URL(args.url); if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Use an HTTP or HTTPS URL.'); window.open(url.href, '_blank', 'noopener,noreferrer'); break; }
     case 'open_support': window.open('https://github.com/aicodeking/pandacode/issues', '_blank', 'noopener,noreferrer'); break;
+    case 'list_terminals': result = []; break;
+    case 'terminal_snapshot': result = { data: '', end: 0 }; break;
+    case 'core_info': result = { version: 'Preview', remote: false }; break;
+    case 'fs_home': result = '/Users/you'; break;
+    case 'fs_list': {
+      const path = String(args.path ?? '/Users/you').replace(/\/+$/, '') || '/';
+      const names: [string, 'dir' | 'file'][] = path === '/Users/you' ? [['Projects', 'dir'], ['Downloads', 'dir'], ['notes.md', 'file']] : path.endsWith('/Projects') ? [['new-project', 'dir'], ['pandacode', 'dir']] : [['README.md', 'file'], ['screenshot.png', 'file']];
+      const parent = path === '/' ? null : path.replace(/\/[^/]*$/, '') || '/';
+      result = { path, parent, entries: names.map(([name, kind]) => ({ name, kind, size: kind === 'file' ? 1024 : 0, path: `${path === '/' ? '' : path}/${name}` })) };
+      break;
+    }
     case 'support_details': result = { version: 'Preview', platform: 'Browser preview', architecture: 'Not reported' }; break;
     case 'browser_inspect': result = args.action === 'read' ? { url: browserState.url, title: browserState.title, text: 'Browser preview sample page', elements: [] } : { dispatched: true }; break;
     case 'list_provider_models': result = args.provider === 'opencode' ? previewOpenCodeChoices() : catalogs[args.provider as ProviderId] ?? []; break;
@@ -1112,6 +1127,14 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
       }
       emit('android-setup', { step: 5, total: 5, label: 'Android emulator ready', done: true, error: null });
       result = 'Pixel_9_API_35'; break;
+    }
+    case 'orchestrator_settings': result = previewOrchestrator.settings(); break;
+    case 'orchestrator_save_settings': result = previewOrchestrator.save(args.settings, args.webhookSecret); break;
+    case 'orchestrator_reveal_token': result = previewOrchestrator.revealToken(); break;
+    case 'set_task_supervisor': {
+      const task = session(args.sessionId), orchestrator = previewOrchestrator.settings();
+      if (args.supervisor != null && args.supervisor !== orchestrator.name) throw new Error(`Only ${orchestrator.name} can supervise tasks.`);
+      task.supervisor = args.supervisor ?? null; result = structuredClone(task); emit('sessions-changed', {}); break;
     }
     case 'cloud_connections': result = previewCloud.connections(); break;
     case 'cloud_connect': result = previewCloud.connect(args.provider, args.key, args.options ?? {}); emit('vm-changed', {}); break;

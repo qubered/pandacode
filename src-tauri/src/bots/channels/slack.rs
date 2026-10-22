@@ -55,7 +55,7 @@ pub(crate) fn inbound(event: &Value, bot_user: &str) -> Option<(String, String, 
     Some((user, thread, text))
 }
 
-pub(crate) async fn run(app: &tauri::AppHandle, channel: &Channel, mut stop: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+pub(crate) async fn run(app: &crate::AppHandle, channel: &Channel, mut stop: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     let bot_token = secrets::get(&channel.id, "token").ok_or("auth:The Slack bot token is missing.")?;
     let app_token = secrets::get(&channel.id, "app_token").ok_or("auth:The Slack app-level token is missing.")?;
     let me = call(&bot_token, "auth.test", &json!({})).await?;

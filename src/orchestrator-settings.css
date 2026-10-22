@@ -1,0 +1,22 @@
+/* Settings → Agents → Orchestrator. */
+.orchestrator-form{display:contents}
+.orchestrator-form>.setting-row{border-top:1px solid var(--border)}
+.orchestrator-control{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.settings-page-root .orchestrator-settings .setting-row>.orchestrator-control{min-width:0}
+.orchestrator-settings .orchestrator-input{width:15rem;max-width:100%;height:32px;padding:0 10px;border-radius:3px;border:1px solid color-mix(in srgb,var(--text) 12%,transparent);background:color-mix(in srgb,var(--text) 4%,transparent);color:var(--text);font:inherit;font-size:.82rem}
+.orchestrator-settings .orchestrator-input:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.orchestrator-settings .orchestrator-port{width:6rem}
+.orchestrator-settings .orchestrator-wide{width:21rem}
+.orchestrator-url{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:.76rem;color:var(--muted)}
+.orchestrator-footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:.6rem 1rem;border-top:1px solid var(--border)}
+.orchestrator-footer p{margin:0 auto 0 0;font-size:.76rem}
+.orchestrator-error{color:var(--danger)}
+.orchestrator-saved{color:var(--muted)}
+.orchestrator-snippet-block{padding:.7rem 1rem .9rem;border-top:1px solid var(--border)}
+.orchestrator-snippet-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.orchestrator-snippet-head strong{font-size:.88rem;font-weight:520}
+.orchestrator-snippet-head .secondary-button{margin-left:auto}
+.orchestrator-snippet{margin:0;padding:8px 10px;overflow:auto;border-radius:4px;background:var(--raised);font-family:var(--mono);font-size:.74rem;line-height:1.5;white-space:pre}
+.orchestrator-snippet:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+@media(max-width:560px){.orchestrator-settings .orchestrator-input,.orchestrator-settings .orchestrator-wide{width:100%}}
+.orchestrator-snippet-head .info-mark{margin-left:0}

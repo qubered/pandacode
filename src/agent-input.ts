@@ -14,13 +14,14 @@ function node<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', con
 }
 
 /** One retained form per request; answers stay local and are never written to storage. */
-export function createAgentInput(sessionId: string, requestId: string, data: unknown, resolved: () => void): AgentInput {
+export function createAgentInput(sessionId: string, requestId: string, data: unknown, resolved: () => void, note?: string): AgentInput {
   const request = object(data) ? data : {};
   const element = node('form', 'agent-input');
   element.dataset.requestId = requestId;
   element.setAttribute('aria-label', request.kind === 'questions' ? 'Agent questions' : 'Integration request');
   const heading = node('h3', '', request.kind === 'questions' ? 'A quick question' : 'Input needed');
   element.append(heading);
+  if (note) element.append(node('p', 'supervisor-note', note));
   const fields = node('fieldset', 'agent-input-fields');
   element.append(fields);
   const error = node('p', 'agent-input-error'); error.setAttribute('role', 'alert'); error.hidden = true;

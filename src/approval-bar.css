@@ -27,4 +27,7 @@ button.approval-summary:hover{color:var(--text)}
 .approval-allow:hover:not(:disabled){background:var(--accent-hover,var(--accent))}
 .approval-actions button:disabled{opacity:.5;cursor:default}
 .approval-full{margin:0 0 6px 23px;padding:6px 8px;max-height:160px;overflow:auto;border-radius:4px;background:var(--raised);font-family:var(--mono);font-size:.74rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+/* Shown on the bar and on agent questions while an orchestrator supervises the task. */
+.supervisor-note{margin:0 0 4px 23px;padding:0 0 2px;font-size:.72rem;color:var(--muted)}
+.agent-input .supervisor-note{margin:-6px 0 10px}
 @media (prefers-contrast:more){.approval-bar{box-shadow:inset 0 0 0 1px var(--text)}}

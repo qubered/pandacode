@@ -36,7 +36,7 @@ fn preview_catalog() -> Vec<Value> {
 
 /// These tools stay registered on every harness turn so deferred references in
 /// resumed Claude conversations never outlive their definitions.
-pub fn with_preview(base: Option<ToolHost>, app: tauri::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> ToolHost {
+pub fn with_preview(base: Option<ToolHost>, app: crate::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> ToolHost {
     let preview = preview_catalog();
     let mut tools = base.as_ref().map_or_else(Vec::new, |host| host.tools.clone());
     let mut approval_tools = base.as_ref().map_or_else(Default::default, |host| host.approval_tools.clone());
@@ -98,7 +98,7 @@ fn optional_jev_catalog(browser: bool, decisions: bool) -> Vec<Value> {
 /// callbacks retain their existing availability and approval boundaries.
 pub fn with_jev(
     base: Option<ToolHost>,
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: String,
     stopped: Arc<AtomicBool>,
 ) -> Option<ToolHost> {
@@ -157,7 +157,7 @@ pub(crate) fn jev_host_catalog(
 }
 
 async fn jev_dispatch(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     sid: &str,
     name: &str,
     mut args: Value,
@@ -357,7 +357,7 @@ pub fn catalog() -> Vec<Value> {
     ]
 }
 
-pub fn host(app: tauri::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> ToolHost {
+pub fn host(app: crate::AppHandle, session_id: String, stopped: Arc<AtomicBool>) -> ToolHost {
     let tools = catalog();
     // Host callbacks are outside Codex's sandbox. All mutations and browser
     // access require approval, except when the user explicitly chose Full access.
@@ -615,7 +615,7 @@ fn mutate_task(
 }
 
 async fn dispatch(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     sid: &str,
     name: &str,
     args: Value,
@@ -755,7 +755,7 @@ async fn dispatch(
                 return Err("Use this on another task; the current task is already running this turn.".into());
             }
             if name == "pandacode_steer_task" {
-                crate::message_queue::steer_task(state, target.id.clone(), string(&args, "text")).await?;
+                crate::message_queue::steer_task_inner(state, target.id.clone(), string(&args, "text")).await?;
                 let _ = app.emit("sessions-changed", ());
                 json!({"steered": true})
             } else {
@@ -802,7 +802,7 @@ async fn dispatch(
 }
 
 struct UiGuard {
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     id: String,
 }
 impl Drop for UiGuard {
@@ -813,7 +813,7 @@ impl Drop for UiGuard {
     }
 }
 async fn request_ui(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     sid: &str,
     action: &str,
     args: Value,

@@ -32,7 +32,7 @@ export interface QueueView {
   hold: HoldReason | null;
   running: boolean;
   steerable: boolean;
-  /** Send now can start a turn here (bot conversations drain natively, so they cannot). */
+  /** Send now can start a turn here (bot conversations and supervised tasks drain natively, so they cannot). */
   sendable: boolean;
   editingId: string | null;
   busy: boolean;

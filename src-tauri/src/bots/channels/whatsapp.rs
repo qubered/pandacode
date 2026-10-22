@@ -45,13 +45,13 @@ pub(crate) fn messages(payload: &Value) -> Vec<(String, String, String)> {
     found
 }
 
-fn channel(app: &tauri::AppHandle, id: &str) -> Option<Channel> {
+fn channel(app: &crate::AppHandle, id: &str) -> Option<Channel> {
     let state = app.state::<AppState>();
     let store = state.store.lock().ok()?;
     super::get(&store, id).ok().filter(|c| c.kind == "whatsapp" && c.enabled)
 }
 
-pub(crate) async fn webhook(app: &tauri::AppHandle, channel_id: &str, request: &Request) -> Response {
+pub(crate) async fn webhook(app: &crate::AppHandle, channel_id: &str, request: &Request) -> Response {
     let Some(channel) = channel(app, channel_id) else { return Response::text(404, "Not found.") };
     match request.method.as_str() {
         "GET" => {

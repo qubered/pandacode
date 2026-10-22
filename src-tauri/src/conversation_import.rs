@@ -155,7 +155,7 @@ async fn codex_page(state: &AppState, search: &Option<String>, cursor: &Option<S
 }
 
 #[tauri::command]
-pub async fn list_importable_conversations(app: tauri::AppHandle, window: tauri::WebviewWindow, provider: String, search: Option<String>, cursor: Option<String>) -> Result<ImportPage> {
+pub async fn list_importable_conversations(app: crate::AppHandle, window: crate::WebviewWindow, provider: String, search: Option<String>, cursor: Option<String>) -> Result<ImportPage> {
     if window.label() != "main" {
         return Err("Conversations can be imported only from the main window.".into());
     }
@@ -234,7 +234,7 @@ async fn import_codex(state: &AppState, id: &str, fallback_model: &str) -> Resul
 }
 
 #[tauri::command]
-pub async fn import_conversations(app: tauri::AppHandle, window: tauri::WebviewWindow, provider: String, ids: Vec<String>, model: Option<String>) -> Result<ImportResult> {
+pub async fn import_conversations(app: crate::AppHandle, window: crate::WebviewWindow, provider: String, ids: Vec<String>, model: Option<String>) -> Result<ImportResult> {
     if window.label() != "main" {
         return Err("Conversations can be imported only from the main window.".into());
     }

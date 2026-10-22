@@ -9,7 +9,8 @@ use std::{
     path::{Component, Path, PathBuf},
     time::Duration,
 };
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
+use crate::AppHandle;
 
 const MAX_PACKAGE: u64 = 64 * 1024 * 1024;
 const MAX_JSON: u64 = 4 * 1024 * 1024;

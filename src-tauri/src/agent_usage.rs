@@ -517,7 +517,7 @@ fn claude_service(config: Option<&str>, secure: Option<&str>) -> String {
 
 #[tauri::command]
 pub(crate) async fn agent_usage(
-    window: tauri::WebviewWindow,
+    window: crate::WebviewWindow,
     provider: String,
     refresh: bool,
 ) -> crate::Result<Usage> {

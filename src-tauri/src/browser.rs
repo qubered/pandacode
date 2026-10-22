@@ -142,19 +142,19 @@ fn bounded(mut bounds: BrowserBounds, window: &tauri::Window) -> Result<BrowserB
     Ok(bounds)
 }
 
-fn update(app: &tauri::AppHandle, f: impl FnOnce(&mut BrowserStatus)) {
+fn update(app: &crate::AppHandle, f: impl FnOnce(&mut BrowserStatus)) {
     if let Ok(mut status) = app.state::<BrowserState>().status.lock() {
         f(&mut status);
         let _ = app.emit_to("main", "browser-state", status.clone());
     }
 }
 
-fn guest(app: &tauri::AppHandle) -> Result<Webview> {
+fn guest(app: &crate::AppHandle) -> Result<Webview> {
     app.get_webview(LABEL)
         .ok_or_else(|| "Open a page in the browser first.".into())
 }
 
-fn current_view(app: &tauri::AppHandle, generation: u64) -> bool {
+fn current_view(app: &crate::AppHandle, generation: u64) -> bool {
     app.state::<BrowserState>()
         .view_generation
         .load(Ordering::SeqCst)
@@ -199,7 +199,7 @@ fn sync_status(view: &Webview, generation: u64) {
     }
 }
 
-fn watch_loading(app: &tauri::AppHandle, generation: u64) {
+fn watch_loading(app: &crate::AppHandle, generation: u64) {
     let watch = app
         .state::<BrowserState>()
         .load_generation
@@ -232,7 +232,7 @@ fn watch_loading(app: &tauri::AppHandle, generation: u64) {
 #[tauri::command]
 pub async fn browser_open(
     caller: Webview,
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     url: String,
     bounds: BrowserBounds,
 ) -> Result<BrowserStatus> {
@@ -344,7 +344,7 @@ fn raise(view: &Webview) -> Result<()> {
 #[tauri::command]
 pub async fn browser_bounds(
     caller: Webview,
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     bounds: BrowserBounds,
     visible: bool,
 ) -> Result<()> {
@@ -367,7 +367,7 @@ pub async fn browser_bounds(
 }
 
 #[tauri::command]
-pub async fn browser_action(caller: Webview, app: tauri::AppHandle, action: String) -> Result<()> {
+pub async fn browser_action(caller: Webview, app: crate::AppHandle, action: String) -> Result<()> {
     guard(&caller)?;
     if !matches!(action.as_str(), "back" | "forward" | "reload" | "stop") {
         return Err("Unknown browser action.".into());
@@ -409,7 +409,7 @@ pub async fn browser_action(caller: Webview, app: tauri::AppHandle, action: Stri
     Ok(())
 }
 
-fn cancel_pick(app: &tauri::AppHandle) {
+fn cancel_pick(app: &crate::AppHandle) {
     let state = app.state::<BrowserState>();
     state.generation.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut key) = state.pick_key.lock() {
@@ -426,7 +426,7 @@ fn cancel_pick(app: &tauri::AppHandle) {
 #[tauri::command]
 pub async fn browser_inspect(
     caller: Webview,
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     action: String,
     selector: Option<String>,
     text: Option<String>,
@@ -478,7 +478,7 @@ async fn evaluate(view: &Webview, script: String) -> Result<String> {
 }
 
 #[tauri::command]
-pub async fn browser_pick(caller: Webview, app: tauri::AppHandle, enabled: bool) -> Result<()> {
+pub async fn browser_pick(caller: Webview, app: crate::AppHandle, enabled: bool) -> Result<()> {
     guard(&caller)?;
     cancel_pick(&app);
     if !enabled {
@@ -582,7 +582,7 @@ fn validate_element(mut element: BrowserElement) -> Option<BrowserElement> {
 }
 
 #[tauri::command]
-pub async fn browser_capture(caller: Webview, app: tauri::AppHandle) -> Result<BrowserScreenshot> {
+pub async fn browser_capture(caller: Webview, app: crate::AppHandle) -> Result<BrowserScreenshot> {
     guard(&caller)?;
     cancel_pick(&app);
     let state = app.state::<BrowserState>();
@@ -656,7 +656,7 @@ pub async fn browser_capture(caller: Webview, app: tauri::AppHandle) -> Result<B
 }
 
 fn ensure_capture_context(
-    app: &tauri::AppHandle,
+    app: &crate::AppHandle,
     view: &Webview,
     generation: u64,
     navigation: u64,
@@ -753,7 +753,7 @@ async fn capture(_: &Webview) -> Result<(Vec<u8>, u32, u32)> {
 }
 
 #[tauri::command]
-pub async fn browser_close(caller: Webview, app: tauri::AppHandle) -> Result<()> {
+pub async fn browser_close(caller: Webview, app: crate::AppHandle) -> Result<()> {
     guard(&caller)?;
     let state = app.state::<BrowserState>();
     let _lifecycle = state.lifecycle.lock().await;

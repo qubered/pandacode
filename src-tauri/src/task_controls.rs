@@ -60,7 +60,7 @@ async fn live_goal(
 
 #[tauri::command]
 pub(super) async fn task_goal(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     request: GoalRequest,
@@ -379,7 +379,7 @@ impl Drop for TaskLease {
 
 #[tauri::command]
 pub(super) async fn fork_session_at_message(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     message_id: i64,
@@ -611,7 +611,7 @@ pub(super) async fn rename_task(state: &AppState, sid: &str, title: &str) -> Res
 
 #[tauri::command]
 pub(super) async fn start_harness_terminal(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     cols: u16,
@@ -662,6 +662,8 @@ pub(super) async fn start_harness_terminal(
         ensure_console_goal_inactive(current.goal_state.as_ref())?;
         // Keep the reservation until the terminal is in the registry. The new
         // console becomes its owner before the lease releases the agent slot.
+        let owner = terminal::Owner { project_id: current.project_id.clone(), session_id: Some(session_id.clone()), kind: "harness" };
+        let registry = terms.clone();
         terminal::start_harness(
             app,
             terms,
@@ -677,6 +679,9 @@ pub(super) async fn start_harness_terminal(
             cols,
             rows,
         )
+        .inspect(|id| {
+            let _ = terminal::set_owner(&registry, id, owner);
+        })
     })
     .await
 }

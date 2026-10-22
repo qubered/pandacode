@@ -10,11 +10,29 @@ name = "pandacode_lib"
 # Desktop only links the rlib; add "staticlib", "cdylib" back for mobile targets.
 crate-type = ["rlib"]
 
+[features]
+default = ["desktop"]
+# The desktop app: Tauri's webview runtime and Tauri's default features.
+desktop = ["tauri/wry", "tauri/compression", "tauri/common-controls-v6", "tauri/dynamic-acl", "tauri/x11", "tauri/dbus"]
+# The headless core for remote mode (docs/remote-core.md): no webview at run time.
+# Build with --no-default-features --features headless.
+headless = ["tauri/test"]
+
+[[bin]]
+name = "pandacode"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "pandacode-core"
+path = "src/bin/pandacode-core.rs"
+required-features = ["headless"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api", "unstable"] }
+tauri = { version = "2", default-features = false, features = ["macos-private-api", "unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }

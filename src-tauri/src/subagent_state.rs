@@ -1,4 +1,6 @@
 //! Per-run snapshots keep child streaming off SQLite's shared write lock.
+// Parts of this state feed only the desktop launcher (overlay.rs).
+#![cfg_attr(not(feature = "desktop"), allow(dead_code))]
 use crate::{
     providers::{AgentEvent, SubagentActivity},
     storage::Store,

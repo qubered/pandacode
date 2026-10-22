@@ -1,0 +1,21 @@
+/* Remote file picker (remote mode only). It stacks above #dialog, so it carries
+   the sheet's glass itself instead of handing it to .dialog-plate. */
+dialog.remote-picker{width:min(560px,calc(100vw - 32px));display:flex;flex-direction:column;gap:0;border:.5px solid var(--glass-edge);border-radius:var(--sheet-radius,6px);
+  background:radial-gradient(70% 46% at 50% -8%,var(--glass-glow),transparent 72%),linear-gradient(180deg,var(--glass-warm),var(--glass-tint) 46%),var(--bg);
+  box-shadow:0 0 0 .5px var(--glass-ring),0 40px 100px -30px var(--glass-shadow-deep),inset 0 1px 0 var(--glass-highlight)}
+dialog.remote-picker:not([open]){display:none}
+dialog.remote-picker::backdrop{background:var(--scrim)}
+.remote-picker .dialog-description{margin:0 0 10px;color:var(--muted);font-size:.8rem}
+.remote-picker-path{display:flex;gap:6px;align-items:center}
+.remote-picker-path input{flex:1;min-width:0;font-family:var(--mono,ui-monospace,monospace);font-size:.8rem;padding:7px 9px;border:1px solid var(--glass-line);border-radius:4px;color:var(--text)}
+.remote-picker-list{margin-top:8px;height:min(46vh,360px);overflow:auto;border:1px solid var(--glass-line);border-radius:4px;background:var(--glass-fill);padding:3px}
+.remote-picker-row{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:3px;background:none;color:var(--text);font-size:.84rem;text-align:left;cursor:default}
+.remote-picker-row span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remote-picker-row .icon{width:15px;height:15px;flex-shrink:0;color:var(--muted)}
+.remote-picker-row:hover:not(:disabled){background:var(--glass-fill-hover)}
+.remote-picker-row[aria-selected="true"]{background:rgb(var(--accent-rgb) / .18)}
+.remote-picker-row:disabled{opacity:.45}
+.remote-picker-empty{margin:14px;color:var(--muted);font-size:.82rem}
+.remote-picker-error{margin:8px 0 0;color:var(--danger,#c0392b)}
+.remote-picker-hidden{margin-right:auto;display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
+.remote-picker-hidden input{width:auto;margin:0}

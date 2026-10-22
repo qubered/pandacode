@@ -725,7 +725,7 @@ impl Drop for InstallGuard {
     }
 }
 #[tauri::command]
-pub async fn jev_install_runtime(app: tauri::AppHandle) -> Result<Doctor> {
+pub async fn jev_install_runtime(app: crate::AppHandle) -> Result<Doctor> {
     let (dir, settings) = {
         let app_state = app.state::<AppState>();
         let _admission = app_state
@@ -827,7 +827,7 @@ pub async fn jev_install_runtime(app: tauri::AppHandle) -> Result<Doctor> {
     Ok(report)
 }
 
-fn validate_task(app: &tauri::AppHandle, session_id: &str) -> Result<()> {
+fn validate_task(app: &crate::AppHandle, session_id: &str) -> Result<()> {
     let state = app.state::<AppState>();
     state
         .store
@@ -1022,7 +1022,7 @@ fn persist_report(dir: &Path, report: &Report) -> Result<()> {
     }
     Ok(())
 }
-pub fn list_for_task(app: &tauri::AppHandle, session_id: &str) -> Result<Vec<Report>> {
+pub fn list_for_task(app: &crate::AppHandle, session_id: &str) -> Result<Vec<Report>> {
     validate_task(app, session_id)?;
     let (dir, active) = {
         let state = runtime()?;
@@ -1046,7 +1046,7 @@ pub fn list_for_task(app: &tauri::AppHandle, session_id: &str) -> Result<Vec<Rep
     Ok(reports)
 }
 pub fn read_for_task(
-    app: &tauri::AppHandle,
+    app: &crate::AppHandle,
     session_id: &str,
     run_id: &str,
     include_screenshot: bool,
@@ -1099,7 +1099,7 @@ fn screenshot(path: &Path) -> Option<String> {
         base64::engine::general_purpose::STANDARD.encode(bytes)
     ))
 }
-pub fn cancel_for_task(app: &tauri::AppHandle, session_id: &str, run_id: &str) -> Result<()> {
+pub fn cancel_for_task(app: &crate::AppHandle, session_id: &str, run_id: &str) -> Result<()> {
     validate_task(app, session_id)?;
     let state = runtime()?;
     if let Some(active) = state.active.get(run_id) {
@@ -1119,24 +1119,24 @@ pub fn cancel_for_task(app: &tauri::AppHandle, session_id: &str, run_id: &str) -
     Ok(())
 }
 #[tauri::command]
-pub async fn jev_list_runs(app: tauri::AppHandle, session_id: String) -> Result<Vec<Report>> {
+pub async fn jev_list_runs(app: crate::AppHandle, session_id: String) -> Result<Vec<Report>> {
     crate::blocking(move || list_for_task(&app, &session_id)).await
 }
 #[tauri::command]
 pub async fn jev_read_run(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: String,
     run_id: String,
 ) -> Result<Report> {
     crate::blocking(move || read_for_task(&app, &session_id, &run_id, true)).await
 }
 #[tauri::command]
-pub async fn jev_cancel(app: tauri::AppHandle, session_id: String, run_id: String) -> Result<()> {
+pub async fn jev_cancel(app: crate::AppHandle, session_id: String, run_id: String) -> Result<()> {
     cancel_for_task(&app, &session_id, &run_id)
 }
 #[tauri::command]
 pub async fn jev_watch_run(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: String,
     run_id: String,
     watching: bool,
@@ -1195,14 +1195,14 @@ fn active_watch(state: &Runtime, report: &Report, now: Instant) -> Option<(Insta
 
 #[tauri::command]
 pub async fn jev_start(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: String,
     request: Request,
 ) -> Result<Report> {
     start(app, &session_id, request, None).await
 }
 pub async fn start_for_task(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: &str,
     request: Request,
     stopped: Arc<AtomicBool>,
@@ -1211,7 +1211,7 @@ pub async fn start_for_task(
 }
 
 async fn start(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: &str,
     request: Request,
     parent_stopped: Option<Arc<AtomicBool>>,
@@ -1417,7 +1417,7 @@ fn apply_output(report: &mut Report, value: Value, saved: &Saved) -> Result<bool
         _ => Err("Jev returned an invalid runtime event.".into()),
     }
 }
-fn publish(app: &tauri::AppHandle, report: &Report) {
+fn publish(app: &crate::AppHandle, report: &Report) {
     if let Ok(mut state) = runtime() {
         if let Some(active) = state.active.get_mut(&report.id) {
             active.report = report.clone();
@@ -1504,7 +1504,7 @@ fn read_live_frame(
 }
 
 fn publish_frame(
-    app: &tauri::AppHandle,
+    app: &crate::AppHandle,
     profile: &Path,
     report: &Report,
     value: Value,
@@ -1556,7 +1556,7 @@ async fn bounded_line<R: tokio::io::AsyncBufRead + Unpin>(
     }
 }
 async fn execute(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     dir: PathBuf,
     saved: Saved,
     request: Request,

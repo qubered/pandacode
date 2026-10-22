@@ -90,6 +90,8 @@ pub struct Session {
     /// When that limit resets, if the harness reported it.
     pub limited_until: Option<i64>,
     pub resume_at_reset: bool,
+    /// The orchestrator supervising this task (such as "hermes"), or None for the user.
+    pub supervisor: Option<String>,
     pub resume_id: Option<String>,
     /// Checkout owned by this task; the project continues to identify its repository.
     pub worktree_path: Option<String>,
@@ -129,6 +131,9 @@ pub struct Message {
     /// The saved response author, resolved independently of the visible page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author_provider: Option<String>,
+    /// Who wrote a user message when it was not the user (an orchestrator such as "hermes").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_changes: Option<crate::turn_changes::TurnChanges>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,7 +153,7 @@ pub struct Store {
 type Result<T> = std::result::Result<T, String>;
 /// The newest `PRAGMA user_version`. Every migration step below must run for any
 /// database older than this, so the guard reads this constant, never a literal.
-pub const SCHEMA_VERSION: i64 = 25;
+pub const SCHEMA_VERSION: i64 = 26;
 
 const SIDEBAR_ORDER: &str = "pinned DESC,sidebar_order IS NULL,sidebar_order,COALESCE(MAX(last_response_at,last_prompt_at),last_response_at,last_prompt_at,created_at) DESC,id";
 
@@ -401,6 +406,17 @@ impl Store {
                 migration.execute_batch(crate::bots::SCHEMA).map_err(|e| e.to_string())?;
                 migration.execute_batch("PRAGMA user_version=25;").map_err(|e| e.to_string())?;
             }
+            if version < 26 {
+                // Orchestration (docs/superpowers/specs/2026-10-22-hermes-orchestrator-design.md):
+                // who supervises a task, and who wrote a user message (NULL = the user).
+                for (table, name) in [("sessions", "supervisor"), ("messages", "sender"), ("queued_messages", "sender")] {
+                    let exists: bool = migration.query_row(&format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"), [name], |r| r.get(0)).map_err(|e| e.to_string())?;
+                    if !exists {
+                        migration.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {name} TEXT;")).map_err(|e| e.to_string())?;
+                    }
+                }
+                migration.execute_batch("PRAGMA user_version=26;").map_err(|e| e.to_string())?;
+            }
             migration.commit().map_err(|e| e.to_string())?;
         }
         let recovery = db.transaction().map_err(|e| e.to_string())?;
@@ -607,6 +623,7 @@ impl Store {
             limited_at: r.get(26)?,
             limited_until: r.get(27)?,
             resume_at_reset: r.get(28)?,
+            supervisor: r.get(29)?,
             resume_id: r.get(10)?,
             last_response_at: r.get(11)?,
             last_prompt_at: r.get(22)?,
@@ -631,7 +648,7 @@ impl Store {
     pub fn sessions(&self) -> Result<Vec<Session>> {
         // Lists only need a card preview. Full details remain in SQLite and are
         // fetched for the selected task or directly for an agent's Start prompt.
-        let mut stmt=self.db.prepare(&format!("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,substr(task_description,1,512),completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset FROM sessions WHERE draft=0 AND id NOT IN (SELECT session_id FROM architect_workers) ORDER BY {SIDEBAR_ORDER} LIMIT 500")).map_err(|e|e.to_string())?;
+        let mut stmt=self.db.prepare(&format!("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,substr(task_description,1,512),completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor FROM sessions WHERE draft=0 AND id NOT IN (SELECT session_id FROM architect_workers) ORDER BY {SIDEBAR_ORDER} LIMIT 500")).map_err(|e|e.to_string())?;
         let rows = stmt
             .query_map([], Self::session_row)
             .map_err(|e| e.to_string())?;
@@ -641,8 +658,78 @@ impl Store {
         self.attach_links(&mut sessions)?;
         Ok(sessions)
     }
+    /// Tasks for the orchestrator's `list_tasks`, newest activity first. Drafts, archived
+    /// tasks and architect workers are left out. `supervisor` is None for any supervisor,
+    /// `Some(None)` for tasks the user supervises, `Some(Some(name))` for that orchestrator's.
+    pub fn list_tasks_filtered(&self, project_id: Option<&str>, status: Option<&str>, supervisor: Option<Option<&str>>, limit: usize) -> Result<Vec<Session>> {
+        let mut stmt = self.db.prepare("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,substr(task_description,1,512),completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor FROM sessions
+            WHERE draft=0 AND archived=0 AND id NOT IN (SELECT session_id FROM architect_workers)
+              AND (?1 IS NULL OR project_id=?1) AND (?2 IS NULL OR status=?2) AND (?3=0 OR supervisor IS ?4)
+            ORDER BY updated_at DESC,id LIMIT ?5").map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![project_id, status, supervisor.is_some(), supervisor.flatten(), limit as i64], Self::session_row)
+            .map_err(|e| e.to_string())?;
+        let mut sessions = rows.collect::<std::result::Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        self.attach_links(&mut sessions)?;
+        Ok(sessions)
+    }
+
+    /// Per project: (running, waiting, total) over the tasks `list_tasks_filtered` would list.
+    pub fn project_task_counts(&self) -> Result<std::collections::HashMap<String, (i64, i64, i64)>> {
+        let mut stmt = self.db.prepare("SELECT project_id,SUM(status='running'),SUM(status='waiting'),COUNT(*) FROM sessions
+            WHERE draft=0 AND archived=0 AND id NOT IN (SELECT session_id FROM architect_workers) GROUP BY project_id").map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?))))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<std::result::Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Sets or clears (None) the orchestrator supervising a task.
+    pub fn set_supervisor(&self, sid: &str, supervisor: Option<&str>) -> Result<Session> {
+        let changed = self
+            .db
+            .execute("UPDATE sessions SET supervisor=?2 WHERE id=?1", params![sid, supervisor])
+            .map_err(|e| e.to_string())?;
+        if changed == 0 {
+            return Err("Conversation not found.".into());
+        }
+        self.session(sid)
+    }
+
+    /// Marks a user message as written by an orchestrator rather than the user.
+    pub fn set_message_sender(&self, message_id: i64, sender: &str) -> Result<()> {
+        self.db
+            .execute("UPDATE messages SET sender=?2 WHERE id=?1 AND role='user'", params![message_id, sender])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// The newest user message of a task, if any.
+    pub fn latest_user_message_id(&self, sid: &str) -> Result<Option<i64>> {
+        self.db
+            .query_row("SELECT MAX(id) FROM messages WHERE session_id=?1 AND role='user'", [sid], |r| r.get(0))
+            .map_err(|e| e.to_string())
+    }
+
+    /// Marks a queued message as written by an orchestrator; delivery carries it to the message.
+    pub fn queue_set_sender(&self, entry_id: &str, sender: &str) -> Result<()> {
+        self.db
+            .execute("UPDATE queued_messages SET sender=?2 WHERE id=?1", params![entry_id, sender])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Who wrote a queued message, when it was not the user.
+    pub fn queue_sender(&self, entry_id: &str) -> Result<Option<String>> {
+        self.db
+            .query_row("SELECT sender FROM queued_messages WHERE id=?1", [entry_id], |r| r.get(0))
+            .optional()
+            .map(Option::flatten)
+            .map_err(|e| e.to_string())
+    }
+
     pub fn session(&self, sid: &str) -> Result<Session> {
-        let mut session = self.db.query_row("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,task_description,completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset FROM sessions WHERE id=?1",[sid],Self::session_row).optional().map_err(|e|e.to_string())?.ok_or_else(||String::from("Conversation not found."))?;
+        let mut session = self.db.query_row("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,task_description,completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor FROM sessions WHERE id=?1",[sid],Self::session_row).optional().map_err(|e|e.to_string())?.ok_or_else(||String::from("Conversation not found."))?;
         self.attach_links(std::slice::from_mut(&mut session))?;
         Ok(session)
     }
@@ -1519,7 +1606,7 @@ impl Store {
         // Read only the assistant preview before allocating the saved response.
         // BLOB substr preserves embedded NUL; four extra bytes keep any partial
         // UTF-8 code point beyond the existing byte-safe display truncation.
-        let mut stmt=self.db.prepare("SELECT m.id,m.session_id,m.role,CASE WHEN m.role='assistant' THEN COALESCE(substr(CAST(m.content AS BLOB),1,131076),X'') ELSE m.content END,m.created_at,m.turn_duration_ms,t.summary FROM messages m LEFT JOIN turn_changes t ON t.message_id=m.id WHERE m.session_id=?1 AND m.id<?2 ORDER BY m.id DESC LIMIT 100").map_err(|e|e.to_string())?;
+        let mut stmt=self.db.prepare("SELECT m.id,m.session_id,m.role,CASE WHEN m.role='assistant' THEN COALESCE(substr(CAST(m.content AS BLOB),1,131076),X'') ELSE m.content END,m.created_at,m.turn_duration_ms,t.summary,m.sender FROM messages m LEFT JOIN turn_changes t ON t.message_id=m.id WHERE m.session_id=?1 AND m.id<?2 ORDER BY m.id DESC LIMIT 100").map_err(|e|e.to_string())?;
         let rows = stmt
             .query_map(params![sid, before.unwrap_or(i64::MAX)], |r| {
                 let role: String = r.get(2)?;
@@ -1537,6 +1624,7 @@ impl Store {
                     created_at: r.get(4)?,
                     turn_duration_ms: r.get(5)?,
                     author_provider: None,
+                    sender: r.get(7)?,
                     coordination_kind: None,
                     turn_changes: r
                         .get::<_, Option<String>>(6)?
@@ -3449,5 +3537,30 @@ mod tests {
             .update(&session.id, None, None, None, Some("invalid".into()))
             .is_err());
         assert_eq!(store.session(&session.id).unwrap().mode, "plan");
+    }
+}
+
+#[cfg(test)]
+mod orchestration_tests {
+    use super::*;
+
+    #[test]
+    fn supervisor_and_message_sender_round_trip() {
+        let dir = std::env::temp_dir().join(format!("pandacode-orch-store-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("p")).unwrap();
+        let store = Store::open(&dir.join("db.sqlite3")).unwrap();
+        let project = store.add_project(&dir.join("p")).unwrap();
+        let task = store.create_session(&project.id, "claude", "", "ask").unwrap();
+        assert_eq!(task.supervisor, None);
+        assert_eq!(store.set_supervisor(&task.id, Some("hermes")).unwrap().supervisor.as_deref(), Some("hermes"));
+        assert_eq!(store.session(&task.id).unwrap().supervisor.as_deref(), Some("hermes"));
+        assert_eq!(store.set_supervisor(&task.id, None).unwrap().supervisor, None);
+        assert!(store.set_supervisor("missing", Some("hermes")).is_err());
+        store.begin_task_turn(&task.id, "hello").unwrap();
+        let id = store.latest_user_message_id(&task.id).unwrap().unwrap();
+        store.set_message_sender(id, "hermes").unwrap();
+        let messages = store.messages(&task.id, None).unwrap();
+        assert_eq!(messages.iter().find(|m| m.id == id).unwrap().sender.as_deref(), Some("hermes"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

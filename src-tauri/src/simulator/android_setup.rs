@@ -9,7 +9,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-use tauri::{AppHandle, Emitter};
+use tauri::Emitter;
+use crate::AppHandle;
 
 use crate::token_saver::find_tool;
 use crate::workspace::{checked, run_process};

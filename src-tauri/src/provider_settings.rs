@@ -89,7 +89,7 @@ pub fn glm_key() -> Result<Option<String>> {
     stored_key(GLM_KEY)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "macos", target_os = "windows")))]
 fn glm_usage_access() -> Result<std::sync::MutexGuard<'static, ()>> {
     static ACCESS: Mutex<()> = Mutex::new(());
     ACCESS.try_lock().map_err(|_| "The GLM secure-store usage check is busy.".into())
@@ -97,7 +97,7 @@ fn glm_usage_access() -> Result<std::sync::MutexGuard<'static, ()>> {
 
 /// Usage checks must never open an unlock or credential-access dialog. Keep
 /// normal agent launch/settings behavior in `glm_key` unchanged.
-#[cfg(target_os = "macos")]
+#[cfg(all(not(feature = "headless"), target_os = "macos"))]
 pub(crate) fn glm_key_for_usage() -> Result<Option<String>> {
     let _access = glm_usage_access()?;
     crate::usage_keychain::read_glm()
@@ -106,14 +106,19 @@ pub(crate) fn glm_key_for_usage() -> Result<Option<String>> {
         .transpose()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(not(feature = "headless"), target_os = "windows"))]
 pub(crate) fn glm_key_for_usage() -> Result<Option<String>> {
     let _access = glm_usage_access()?;
     // Credential Manager's read is noninteractive.
     glm_key()
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+/// The headless core's secret file never prompts.
+#[cfg(feature = "headless")]
+pub(crate) fn glm_key_for_usage() -> Result<Option<String>> {
+    glm_key()
+}
+#[cfg(all(not(feature = "headless"), not(any(target_os = "macos", target_os = "windows"))))]
 pub(crate) fn glm_key_for_usage() -> Result<Option<String>> {
     // keyring's Secret Service backend unconditionally unlocks matching locked
     // items during get_password(). It has no noninteractive read option, so the
@@ -129,7 +134,7 @@ pub fn deepseek_key() -> Result<Option<String>> {
     stored_key(DEEPSEEK_KEY)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(not(feature = "headless"), target_os = "macos"))]
 pub fn stored_key(credential: Credential) -> Result<Option<String>> {
     use security_framework::passwords::{generic_password, PasswordOptions};
     match generic_password(PasswordOptions::new_generic_password(SERVICE, credential.account)) {
@@ -143,14 +148,21 @@ pub fn stored_key(credential: Credential) -> Result<Option<String>> {
         )),
     }
 }
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
 pub fn stored_key(credential: Credential) -> Result<Option<String>> {
     let _access = store_lock(credential)?;
     native_key_result(credential, store_entry(credential)?.get_password())
 }
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+#[cfg(all(not(feature = "headless"), not(any(target_os = "macos", target_os = "linux", target_os = "windows"))))]
 pub fn stored_key(_credential: Credential) -> Result<Option<String>> {
     Ok(None)
+}
+/// The headless core keeps provider keys in its secret file (see `secret_store::file`).
+#[cfg(feature = "headless")]
+pub fn stored_key(credential: Credential) -> Result<Option<String>> {
+    crate::secret_store::get(SERVICE, credential.account)
+        .map(|key| validate_key(&key).map(str::to_owned).map_err(|_| invalid_key_error(credential)))
+        .transpose()
 }
 
 fn invalid_key_error(credential: Credential) -> String {
@@ -159,7 +171,7 @@ fn invalid_key_error(credential: Credential) -> String {
 
 // The native stores can fail when the same credential is accessed concurrently.
 // Keep each blocking access serialized without holding the settings lock.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
 fn store_lock(credential: Credential) -> Result<std::sync::MutexGuard<'static, ()>> {
     static STORE: Mutex<()> = Mutex::new(());
     STORE
@@ -167,13 +179,13 @@ fn store_lock(credential: Credential) -> Result<std::sync::MutexGuard<'static, (
         .map_err(|_| native_storage_error(credential, "access"))
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
 fn store_entry(credential: Credential) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, credential.account)
         .map_err(|_| native_storage_error(credential, "access"))
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
 fn native_storage_error(credential: Credential, operation: &str) -> String {
     let recovery = if cfg!(target_os = "windows") {
         "Check that Windows Credential Manager is available for your account"
@@ -186,7 +198,7 @@ fn native_storage_error(credential: Credential, operation: &str) -> String {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
 fn native_key_result(credential: Credential, result: keyring::Result<String>) -> Result<Option<String>> {
     match result {
         Ok(key) => validate_key(&key)
@@ -198,7 +210,7 @@ fn native_key_result(credential: Credential, result: keyring::Result<String>) ->
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
 fn save_native_key(credential: Credential, key: &str) -> Result<()> {
     let _access = store_lock(credential)?;
     store_entry(credential)?
@@ -206,13 +218,13 @@ fn save_native_key(credential: Credential, key: &str) -> Result<()> {
         .map_err(|_| native_storage_error(credential, "save"))
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
 fn remove_native_key(credential: Credential) -> Result<()> {
     let _access = store_lock(credential)?;
     native_key_removal_result(credential, store_entry(credential)?.delete_credential())
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
 fn native_key_removal_result(credential: Credential, result: keyring::Result<()>) -> Result<()> {
     match result {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -223,25 +235,29 @@ fn native_key_removal_result(credential: Credential, result: keyring::Result<()>
 /// Save a key in the platform store; platforms without one point at the environment variable.
 fn save_key(credential: Credential, key: &str) -> Result<()> {
     let key = validate_key(key)?;
-    #[cfg(target_os = "macos")]
+    #[cfg(feature = "headless")]
+    return crate::secret_store::set(SERVICE, credential.account, key);
+    #[cfg(all(not(feature = "headless"), target_os = "macos"))]
     return security_framework::passwords::set_generic_password(SERVICE, credential.account, key.as_bytes())
         .map_err(|_| format!("Could not save the {} key in Keychain.", credential.label));
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
     return save_native_key(credential, key);
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    #[cfg(all(not(feature = "headless"), not(any(target_os = "macos", target_os = "linux", target_os = "windows"))))]
     {
         let _ = key;
         Err(format!("Set {} in the app's environment on this platform.", credential.env))
     }
 }
 fn remove_key(credential: Credential) -> Result<()> {
-    #[cfg(target_os = "macos")]
+    #[cfg(feature = "headless")]
+    crate::secret_store::remove(SERVICE, credential.account);
+    #[cfg(all(not(feature = "headless"), target_os = "macos"))]
     if let Err(error) = security_framework::passwords::delete_generic_password(SERVICE, credential.account) {
         if error.code() != -25300 {
             return Err(format!("Could not remove the {} key from Keychain.", credential.label));
         }
     }
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
     remove_native_key(credential)?;
     Ok(())
 }
@@ -310,6 +326,7 @@ fn configuration() -> Result<Configuration> {
         mimo_endpoints: mimo_endpoints(),
         claude_connection_mode,
         secure_storage_available: cfg!(any(
+            feature = "headless",
             target_os = "macos",
             target_os = "linux",
             target_os = "windows"
@@ -387,7 +404,7 @@ fn persist(runtime: &mut Runtime, next: Settings) -> Result<()> {
 }
 #[tauri::command]
 pub async fn provider_set_executable(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     provider: String,
     path: String,
 ) -> Result<Configuration> {
@@ -466,7 +483,7 @@ pub async fn list_opencode_models() -> Result<OpenCodeModels> {
 
 #[tauri::command]
 pub async fn save_opencode_models(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     model_ids: Vec<String>,
 ) -> Result<Vec<String>> {
     let models = validated_opencode_models(model_ids)?;
@@ -562,7 +579,7 @@ pub(crate) fn claude_connection_mode() -> crate::providers::claude_auth::Mode {
 
 #[tauri::command]
 pub async fn provider_set_claude_connection_mode(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     mode: String,
 ) -> Result<Configuration> {
     let mode = match mode.as_str() {
@@ -587,7 +604,7 @@ pub async fn provider_set_claude_connection_mode(
 /// Choose the MiMo cluster shown on the Token Plan page, or pay-as-you-go.
 #[tauri::command]
 pub async fn provider_set_mimo_endpoint(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     endpoint: String,
 ) -> Result<Configuration> {
     if crate::providers::mimo_endpoint_url(&endpoint).is_none() {
@@ -670,7 +687,7 @@ mod tests {
         assert_eq!(encoded["credentialStorageError"], warning);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
     #[test]
     fn native_key_results_distinguish_absence_invalid_keys_and_store_failures() {
         assert_eq!(
@@ -706,7 +723,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(all(not(feature = "headless"), any(target_os = "linux", target_os = "windows")))]
     #[test]
     fn native_key_removal_is_idempotent_and_sanitizes_failures() {
         assert!(native_key_removal_result(GLM_KEY, Ok(())).is_ok());
@@ -856,7 +873,7 @@ mod tests {
         assert!(validate_key(&"x".repeat(4097)).is_err());
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(all(not(feature = "headless"), any(target_os = "macos", target_os = "windows")))]
     #[test]
     fn usage_secure_store_busy_check_returns_without_another_os_read() {
         let _access = glm_usage_access().unwrap();

@@ -854,7 +854,7 @@ fn list(store: &Store, sid: &str) -> Result<Vec<Report>> {
         })
         .collect()
 }
-fn prepare(app: &tauri::AppHandle, sid: &str, request: &Request) -> Result<Prepared> {
+fn prepare(app: &crate::AppHandle, sid: &str, request: &Request) -> Result<Prepared> {
     // Browser reports use their own lock and validate task ownership. Read them
     // before taking Store's lock; never hold a database lock over network work.
     let browser_reports = if request.kind == "review" {
@@ -877,10 +877,10 @@ fn prepare(app: &tauri::AppHandle, sid: &str, request: &Request) -> Result<Prepa
         !key.is_empty(),
     )
 }
-pub fn prepare_for_task(app: &tauri::AppHandle, sid: &str, request: &Request) -> Result<Preview> {
+pub fn prepare_for_task(app: &crate::AppHandle, sid: &str, request: &Request) -> Result<Preview> {
     Ok(prepare(app, sid, request)?.preview)
 }
-pub fn list_for_task(app: &tauri::AppHandle, sid: &str) -> Result<Vec<Report>> {
+pub fn list_for_task(app: &crate::AppHandle, sid: &str) -> Result<Vec<Report>> {
     let state = app.state::<AppState>();
     let store = state
         .store
@@ -889,7 +889,7 @@ pub fn list_for_task(app: &tauri::AppHandle, sid: &str) -> Result<Vec<Report>> {
     list(&store, sid)
 }
 pub fn list_for_project(
-    app: &tauri::AppHandle,
+    app: &crate::AppHandle,
     sid: &str,
     expected_project: &str,
 ) -> Result<Vec<Report>> {
@@ -904,7 +904,7 @@ pub fn list_for_project(
     list(&store, sid)
 }
 pub async fn run_for_task(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     sid: &str,
     request: Request,
     stopped: Arc<AtomicBool>,
@@ -971,7 +971,7 @@ pub async fn run_for_task(
 
 #[tauri::command]
 pub async fn jev_assist_prepare(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: String,
     request: Request,
 ) -> Result<Preview> {
@@ -979,19 +979,19 @@ pub async fn jev_assist_prepare(
 }
 #[tauri::command]
 pub async fn jev_assist_run(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: String,
     request: Request,
 ) -> Result<Report> {
     run_for_task(app, &session_id, request, Arc::new(AtomicBool::new(false))).await
 }
 #[tauri::command]
-pub async fn jev_assist_list(app: tauri::AppHandle, session_id: String) -> Result<Vec<Report>> {
+pub async fn jev_assist_list(app: crate::AppHandle, session_id: String) -> Result<Vec<Report>> {
     crate::blocking(move || list_for_task(&app, &session_id)).await
 }
 #[tauri::command]
 pub async fn jev_assist_save_rules(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: String,
     rules: Vec<String>,
 ) -> Result<Vec<String>> {

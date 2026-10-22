@@ -51,7 +51,7 @@ pub(crate) fn addressed_text(message: &Value, username: &str, bot_id: i64) -> Op
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
-pub(crate) async fn run(app: &tauri::AppHandle, channel: &Channel, mut stop: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+pub(crate) async fn run(app: &crate::AppHandle, channel: &Channel, mut stop: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     let token = token(channel)?;
     let me = call(&token, "getMe", &json!({})).await?;
     let username = me["username"].as_str().unwrap_or_default().to_owned();

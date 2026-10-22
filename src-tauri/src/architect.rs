@@ -275,7 +275,7 @@ fn save(store: &Store, team: &mut TeamSnapshot) -> Result<()> {
     store.db.execute("INSERT INTO architect_teams(session_id,content) VALUES(?1,?2) ON CONFLICT(session_id) DO UPDATE SET content=excluded.content",params![team.session_id,content]).map_err(|e|e.to_string())?;
     Ok(())
 }
-fn emit(app: &tauri::AppHandle, team: &TeamSnapshot) {
+fn emit(app: &crate::AppHandle, team: &TeamSnapshot) {
     let _ = app.emit("architect-event", team);
     let _ = app.emit("sessions-changed", ());
 }
@@ -454,7 +454,7 @@ pub async fn architect_get(
 }
 #[tauri::command]
 pub async fn architect_configure(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     config: Option<TeamConfig>,
@@ -643,7 +643,7 @@ fn apply_pending_setup(store: &Store, team: &mut TeamSnapshot) -> Result<bool> {
 }
 #[tauri::command]
 pub async fn architect_start(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     text: String,
@@ -653,7 +653,7 @@ pub async fn architect_start(
 }
 
 pub(crate) async fn architect_start_in_project(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     text: String,
@@ -746,7 +746,7 @@ fn text_check(value: &str) -> Result<()> {
 }
 #[tauri::command]
 pub async fn architect_control(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     action: String,
@@ -880,7 +880,7 @@ fn catalog() -> Vec<Value> {
     ]
 }
 pub fn host(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     session_id: String,
     stopped: Arc<AtomicBool>,
     admission: &Admission,
@@ -1104,7 +1104,7 @@ fn roster_names(config: &TeamConfig) -> String {
     config.workers.iter().map(|p| format!("{} ({})", p.name, p.id)).collect::<Vec<_>>().join(", ")
 }
 fn dispatch(
-    app: &tauri::AppHandle,
+    app: &crate::AppHandle,
     sid: &str,
     generation: u64,
     name: &str,
@@ -1425,7 +1425,7 @@ fn worker_arg<'a>(team: &'a TeamSnapshot, args: &Value) -> Result<&'a Worker> {
 }
 
 // One pump per app, no provider polling, and no locks survive a launch await.
-pub(crate) fn wake(app: tauri::AppHandle) {
+pub(crate) fn wake(app: crate::AppHandle) {
     let runtime = app.state::<Runtime>();
     runtime.dirty.store(true, Ordering::SeqCst);
     if runtime.scheduled.swap(true, Ordering::SeqCst) {
@@ -1515,7 +1515,7 @@ fn eligible(team: &TeamSnapshot, index: usize) -> bool {
             .iter()
             .any(|other| active(&other.status) && conflicts(worker, other))
 }
-fn next_action(app: &tauri::AppHandle) -> Result<Option<Launch>> {
+fn next_action(app: &crate::AppHandle) -> Result<Option<Launch>> {
     next_action_state(&app.state::<AppState>(), &mut |team| emit(app, team))
 }
 fn next_action_state(
@@ -1790,7 +1790,7 @@ fn next_action_state(
     }
     Ok(None)
 }
-fn fail_launch(app: &tauri::AppHandle, admission: &Admission, sid: &str, error: &str) {
+fn fail_launch(app: &crate::AppHandle, admission: &Admission, sid: &str, error: &str) {
     fail_launch_state(
         &app.state::<AppState>(),
         admission,
@@ -1881,7 +1881,7 @@ fn review_summaries(team: &TeamSnapshot) -> Value {
     }).collect::<Vec<_>>();
     json!({"round":team.round,"workers":workers,"readMore":"Use read_worker for bounded full results and checkpoints. Read every active worker's checkpoint when handling a blocker if its checkpoint was omitted by this context budget."})
 }
-pub(crate) fn activity(app: &tauri::AppHandle, sid: &str, admission: Option<&Admission>) {
+pub(crate) fn activity(app: &crate::AppHandle, sid: &str, admission: Option<&Admission>) {
     let Some(admission) = admission else {
         return;
     };
@@ -1910,7 +1910,7 @@ pub(crate) fn activity(app: &tauri::AppHandle, sid: &str, admission: Option<&Adm
     };
 }
 pub(crate) fn completed(
-    app: &tauri::AppHandle,
+    app: &crate::AppHandle,
     sid: &str,
     admission: Option<&Admission>,
     successful: bool,

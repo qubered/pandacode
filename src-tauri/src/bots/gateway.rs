@@ -78,7 +78,7 @@ fn compose(store: &Store, bot: &Bot, session_id: &str, kind: &str, sender: &str,
 }
 
 /// Starts a turn, or queues the message when the task is already working.
-async fn start_or_queue(app: &tauri::AppHandle, bot: &Bot, session_id: &str, text: String) -> Result<()> {
+async fn start_or_queue(app: &crate::AppHandle, bot: &Bot, session_id: &str, text: String) -> Result<()> {
     let state = app.state::<AppState>();
     let busy = state.agents.lock().map_err(|e| e.to_string())?.contains_key(session_id);
     if busy {
@@ -88,7 +88,7 @@ async fn start_or_queue(app: &tauri::AppHandle, bot: &Bot, session_id: &str, tex
     crate::launch_task_in_project(app.clone(), state, session_id.to_owned(), Some(text), None, Some(bot.project_id.clone())).await
 }
 
-pub(crate) async fn deliver(app: &tauri::AppHandle, inbound: Inbound) -> Result<String> {
+pub(crate) async fn deliver(app: &crate::AppHandle, inbound: Inbound) -> Result<String> {
     let text = inbound.text.trim().chars().take(MAX_INBOUND).collect::<String>();
     if text.is_empty() {
         return Err("Send some text.".into());
@@ -149,7 +149,7 @@ pub(crate) async fn deliver(app: &tauri::AppHandle, inbound: Inbound) -> Result<
 }
 
 /// A schedule or check-in: one ongoing scheduled conversation per bot.
-pub(crate) async fn run_scheduled(app: &tauri::AppHandle, bot_id: &str, label: &str, prompt: &str) -> Result<()> {
+pub(crate) async fn run_scheduled(app: &crate::AppHandle, bot_id: &str, label: &str, prompt: &str) -> Result<()> {
     let state = app.state::<AppState>();
     let (bot, session_id, turn) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -177,7 +177,7 @@ fn latest_reply(store: &Store, session_id: &str) -> Result<String> {
     Ok(parts.join("\n\n").trim().to_owned())
 }
 
-pub(crate) async fn run_finished(app: &tauri::AppHandle, session_id: &str, successful: bool) {
+pub(crate) async fn run_finished(app: &crate::AppHandle, session_id: &str, successful: bool) {
     let state = app.state::<AppState>();
     let found = {
         let Ok(store) = state.store.lock() else { return };
@@ -227,7 +227,7 @@ pub(crate) async fn run_finished(app: &tauri::AppHandle, session_id: &str, succe
 }
 
 /// Prompt text and image ids for queued attachments, as the window's composer builds them.
-fn queued_prompt(attachments: &Value) -> (String, Vec<String>) {
+pub(crate) fn queued_prompt(attachments: &Value) -> (String, Vec<String>) {
     let items = attachments.as_array().map(Vec::as_slice).unwrap_or_default();
     let field = |item: &Value, key: &str| item.get(key).map(|v| v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())).unwrap_or_default();
     let context = items
@@ -245,14 +245,14 @@ fn queued_prompt(attachments: &Value) -> (String, Vec<String>) {
 }
 
 /// Answers an approval natively and clears its card in the desktop app.
-async fn answer(app: &tauri::AppHandle, session_id: &str, request_id: &str, approved: bool) -> Result<()> {
-    crate::respond_approval(app.state::<AppState>(), session_id.to_owned(), request_id.to_owned(), approved).await?;
+async fn answer(app: &crate::AppHandle, session_id: &str, request_id: &str, approved: bool) -> Result<()> {
+    crate::respond_approval(app.clone(), app.state::<AppState>(), session_id.to_owned(), request_id.to_owned(), approved).await?;
     let event = crate::providers::AgentEvent { session_id: session_id.into(), kind: "approval_cancelled".into(), text: String::new(), request_id: Some(request_id.into()), data: None, tool: None };
     let _ = app.emit("agent-event", event);
     Ok(())
 }
 
-pub(crate) async fn approval_requested(app: &tauri::AppHandle, session_id: &str, request_id: &str, text: &str) {
+pub(crate) async fn approval_requested(app: &crate::AppHandle, session_id: &str, request_id: &str, text: &str) {
     let state = app.state::<AppState>();
     let found = state.store.lock().ok().and_then(|store| owner_of(&store, session_id).ok().flatten());
     let Some((bot, thread)) = found else { return };
@@ -290,7 +290,7 @@ pub(crate) async fn approval_requested(app: &tauri::AppHandle, session_id: &str,
     let _ = app.emit("bots-changed", ());
 }
 
-async fn answer_approval(app: &tauri::AppHandle, bot: &Bot, session_id: &str, approved: bool, always: bool) -> Result<()> {
+async fn answer_approval(app: &crate::AppHandle, bot: &Bot, session_id: &str, approved: bool, always: bool) -> Result<()> {
     // Requests answered in the desktop app meanwhile are gone; skip to the oldest live one.
     loop {
         let next = pending().lock().map_err(|e| e.to_string())?.get_mut(session_id).and_then(|list| (!list.is_empty()).then(|| list.remove(0)));
@@ -312,7 +312,7 @@ async fn answer_approval(app: &tauri::AppHandle, bot: &Bot, session_id: &str, ap
 }
 
 /// Sends text to one thread, splitting it to fit the channel.
-pub(crate) async fn reply(app: &tauri::AppHandle, bot: &Bot, channel_id: &str, thread: &str, text: &str) {
+pub(crate) async fn reply(app: &crate::AppHandle, bot: &Bot, channel_id: &str, thread: &str, text: &str) {
     if channel_id == super::DESKTOP {
         let _ = app.emit("bot-notification", json!({"botId": bot.id, "text": text}));
         return;
@@ -323,7 +323,7 @@ pub(crate) async fn reply(app: &tauri::AppHandle, bot: &Bot, channel_id: &str, t
 }
 
 /// A proactive message: to the bot's notification thread, and always to the desktop app.
-pub(crate) async fn notify(app: &tauri::AppHandle, bot: &Bot, text: &str) {
+pub(crate) async fn notify(app: &crate::AppHandle, bot: &Bot, text: &str) {
     let _ = app.emit("bot-notification", json!({"botId": bot.id, "text": text}));
     if let (Some(channel), Some(thread)) = (&bot.notify_channel_id, &bot.notify_thread) {
         reply(app, bot, channel, thread, text).await;
@@ -332,7 +332,7 @@ pub(crate) async fn notify(app: &tauri::AppHandle, bot: &Bot, text: &str) {
 }
 
 /// Stops every running conversation of a bot.
-pub(crate) async fn stop_bot(app: &tauri::AppHandle, bot_id: &str) {
+pub(crate) async fn stop_bot(app: &crate::AppHandle, bot_id: &str) {
     let sessions: Vec<String> = {
         let state = app.state::<AppState>();
         let Ok(store) = state.store.lock() else { return };

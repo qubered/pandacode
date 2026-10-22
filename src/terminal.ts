@@ -1,5 +1,5 @@
 import { paletteTerminal } from './palette';
-import { call, subscribe } from './bridge';
+import { call, remote, subscribe } from './bridge';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { currentTheme } from './theme';
@@ -29,6 +29,17 @@ interface TerminalPreferences {
   cursorStyle?: 'block' | 'bar' | 'underline';
   cursorBlink?: boolean;
   theme?: import('@xterm/xterm').ITheme;
+}
+
+/** Terminals shown on this page; a remote client adopts only live ones nobody shows yet. */
+const shown = new Set<string>();
+type LiveTerminal = { id: string; projectId: string; sessionId?: string | null; kind: 'shell' | 'run' | 'harness' };
+/** Remote mode: the shell from before a reload or reconnect may still be running on the core. */
+async function adoptable(context: TerminalContext): Promise<string | undefined> {
+  if (!remote || context.runRequestId) return undefined;
+  const kind = context.runScript ? 'run' : context.harness ? 'harness' : 'shell';
+  const live = await call<LiveTerminal[]>('list_terminals').catch(() => []);
+  return live.find(item => item.kind === kind && item.projectId === context.projectId && (item.sessionId ?? undefined) === (context.sessionId ?? undefined) && !shown.has(item.id))?.id;
 }
 
 export async function mountTerminal(container: HTMLElement, context: TerminalContext, reportError: (error: unknown) => void): Promise<TerminalController> {
@@ -74,7 +85,9 @@ export async function mountTerminal(container: HTMLElement, context: TerminalCon
   // Each pending PTY owns its startup output. A busy existing tab must not
   // consume another tab's queue before start_terminal returns that tab's ID.
   const early = new Map<string, { terminalId: string; data: string; exit: boolean }>();
-  const handle = (event: { terminalId: string; data: string; exit?: boolean }) => {
+  // While an adopted terminal's snapshot loads, its events wait here.
+  let adopting: import('./types').TerminalEvent[] | null = null;
+  const handle = (event: import('./types').TerminalEvent) => {
     if (!terminalId) {
       const previous = early.get(event.terminalId);
       early.set(event.terminalId, { terminalId: event.terminalId, data: ((previous?.data ?? '') + event.data).slice(-65536), exit: Boolean(previous?.exit || event.exit) });
@@ -83,6 +96,7 @@ export async function mountTerminal(container: HTMLElement, context: TerminalCon
       return;
     }
     if (event.terminalId !== terminalId || disposed) return;
+    if (adopting) { adopting.push(event); return; }
     terminal.write(event.data); hasOutput ||= event.data.length > 0;
     if (event.exit) { exited = true; terminal.write('\r\n\x1b[90mProcess exited. Close and reopen the terminal to start again.\x1b[0m\r\n'); }
     if (insertButton) insertButton.disabled = !hasOutput || exited || inserted;
@@ -92,9 +106,22 @@ export async function mountTerminal(container: HTMLElement, context: TerminalCon
     unlisten = await subscribe('terminal-event', handle);
   } catch (error) { terminal.dispose(); frame.remove(); throw error; }
   try {
+    const adopted = await adoptable(context);
+    if (adopted) {
+      terminalId = adopted; adopting = []; shown.add(adopted);
+      const snapshot = await call<{ data: string; end: number }>('terminal_snapshot', { terminalId: adopted });
+      const waiting = adopting; adopting = null; early.clear();
+      terminal.write(snapshot.data); hasOutput = snapshot.data.length > 0;
+      // Events up to the snapshot's end are already in it.
+      for (const event of waiting) if (event.end == null || event.end > snapshot.end || event.exit) handle({ ...event, data: event.end != null && event.end <= snapshot.end ? '' : event.data });
+      void call('resize_terminal', { terminalId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
+    }
+  } catch { adopting = null; shown.delete(terminalId); terminalId = ''; }
+  if (!terminalId) try {
     const { harness, runScript, runRequestId, ...workspace } = context;
     terminalId = await call<string>(runScript ? 'start_run_script_terminal' : harness ? 'start_harness_terminal' : 'start_terminal', { ...workspace, ...(runRequestId ? { requestId: runRequestId } : {}), cols: terminal.cols, rows: terminal.rows });
   } catch (error) { unlisten(); terminal.dispose(); frame.remove(); throw error; }
+  shown.add(terminalId);
   const pending = early.get(terminalId); early.clear(); if (pending) handle(pending);
   if (insertButton) insertButton.addEventListener('click', () => {
     if (exited || disposed || !hasOutput || !command) return;
@@ -132,7 +159,7 @@ export async function mountTerminal(container: HTMLElement, context: TerminalCon
     insertButton.disabled = exited || disposed || !hasOutput;
   }, activity: () => exited || disposed ? Promise.resolve({ running: false, processNames: [], uncertain: false }) : call<TerminalActivity>('get_terminal_activity', { terminalId }), dispose: async () => {
     if (disposed) return; disposed = true;
-    window.removeEventListener('pandacode-theme-change', refreshTheme); window.removeEventListener('pandacode-palette-change', refreshTheme); window.removeEventListener('pandacode-ui-scale-change', refreshSize); observer.disconnect(); cancelAnimationFrame(resizeFrame); input.dispose(); unlisten(); terminal.dispose(); frame.remove(); await call('close_terminal', { terminalId });
+    window.removeEventListener('pandacode-theme-change', refreshTheme); window.removeEventListener('pandacode-palette-change', refreshTheme); window.removeEventListener('pandacode-ui-scale-change', refreshSize); observer.disconnect(); cancelAnimationFrame(resizeFrame); input.dispose(); unlisten(); terminal.dispose(); frame.remove(); shown.delete(terminalId); await call('close_terminal', { terminalId });
   } };
 }
 

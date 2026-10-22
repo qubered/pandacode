@@ -46,7 +46,7 @@ pub fn install(vms: &Vms, name: &str) -> Result<String, String> {
 }
 
 /// After a Linux VM starts: install a desktop if it has none. Runs once per VM at a time.
-pub fn ensure_in_background(app: tauri::AppHandle, name: String) {
+pub fn ensure_in_background(app: crate::AppHandle, name: String) {
     let vms = app.state::<Vms>();
     if vms.is_macos(&name).unwrap_or(true) || !vms.begin_desktop(&name) {
         return;
