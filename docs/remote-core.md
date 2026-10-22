@@ -1,8 +1,7 @@
 # Remote core: headless backend, remote frontend
 
-Status: **Phases 1–3 are built** (option B). Phase 4 is verified in a Linux
-container and against a local core; an agent turn with approvals still needs
-checking on a host with a logged-in coding CLI (see "Verification").
+Status: **Phases 1–4 are done** (option B), verified end to end on an Ubuntu
+26.04 x86_64 server over Tailscale (see "Verification").
 Remote mode is a third run mode, beside native (Tauri) and preview (browser fixtures).
 
 ## Running it
@@ -68,7 +67,15 @@ For a local trial on one machine, use `npm run core -- --port 7878` and
   - After a page reload, the reopened terminal adopted the same shell. It
     showed output printed while no page was attached.
 
-**Agent turn (local core on macOS):**
+**On a real server (Ubuntu 26.04 x86_64, systemd user service on the tailnet IP,
+frontend on a Mac connecting over Tailscale):**
+- A Claude Code task in Standard mode sent its approval request to the browser
+  (`sleep 25 && date > done.txt`). It was approved there.
+- The page was reloaded while the command ran. It reattached to the running
+  task and the restored tool activity.
+- The agent finished, `done.txt` was on the server, and its reply streamed in.
+
+**Earlier agent check (local core on macOS):**
 - **Working:** a prompt reached the Claude Code and Codex CLIs, and their
   replies streamed back as `agent-event`s, including errors and a provider
   handoff.
