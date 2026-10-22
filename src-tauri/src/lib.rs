@@ -35,6 +35,7 @@ mod message_queue;
 mod moodboards;
 mod prompt_attachments;
 mod remote_files;
+mod orchestrator;
 #[cfg(feature = "headless")]
 pub mod remote_core;
 #[cfg(feature = "desktop")]
@@ -2918,6 +2919,10 @@ pub(crate) fn setup_core(app: &AppHandle, dir: &std::path::Path) -> std::result:
     app.manage(architect::Runtime::default());
     architect::watchdog::watch(app.clone());
     bots::start(app);
+    // The endpoint is optional: a bad address or port must not keep the workspace closed.
+    if let Err(error) = orchestrator::setup(app, dir) {
+        eprintln!("Orchestrator endpoint unavailable: {error}");
+    }
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
@@ -3214,6 +3219,10 @@ pub(crate) fn invoke_handler(invoke: tauri::ipc::Invoke<Rt>) -> bool {
         core_info,
         remote_files::fs_home,
         remote_files::fs_list,
+        orchestrator::orchestrator_settings,
+        orchestrator::orchestrator_save_settings,
+        orchestrator::orchestrator_reveal_token,
+        orchestrator::set_task_supervisor,
         jev::jev_configuration,
         jev::jev_save_configuration,
         jev::jev_doctor,

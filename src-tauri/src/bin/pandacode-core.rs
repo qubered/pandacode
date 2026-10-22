@@ -7,6 +7,10 @@ const USAGE: &str = "Usage: pandacode-core [--bind ADDRESS] [--port PORT] [--dat
                    reach it from another machine; there is no authentication or TLS.
   --port PORT      WebSocket port (default 7878).
   --data-dir DIR   Task database and settings (default: the desktop app's data folder).
+  --mcp-port PORT  Also serve the orchestrator MCP endpoint (for Hermes) on this port
+                   of the --bind address. It needs the bearer token from --print-mcp-token.
+  --print-mcp-token
+                   Print the orchestrator's bearer token (creating it) and exit.
   --allow-origin ORIGIN
                    Also accept browser pages from ORIGIN (repeatable), such as
                    http://laptop:1420. Pages on localhost are always accepted; other
@@ -18,6 +22,8 @@ fn main() {
     let mut port = 7878u16;
     let mut data_dir = None;
     let mut allowed_origins = Vec::new();
+    let mut mcp_port = None;
+    let mut print_token = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().unwrap_or_else(|| fail(&format!("{name} needs a value.")));
@@ -26,6 +32,8 @@ fn main() {
             "--port" => port = value("--port").parse().unwrap_or_else(|_| fail("--port must be a number from 1 to 65535.")),
             "--data-dir" => data_dir = Some(std::path::PathBuf::from(value("--data-dir"))),
             "--allow-origin" => allowed_origins.push(value("--allow-origin")),
+            "--mcp-port" => mcp_port = Some(value("--mcp-port").parse().unwrap_or_else(|_| fail("--mcp-port must be a number from 1 to 65535."))),
+            "--print-mcp-token" => print_token = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return;
@@ -33,11 +41,18 @@ fn main() {
             other => fail(&format!("Unknown option {other}.")),
         }
     }
+    if print_token {
+        if let Err(error) = pandacode_lib::remote_core::print_mcp_token(data_dir) {
+            fail(&error);
+        }
+        return;
+    }
     let ip: std::net::IpAddr = bind.parse().unwrap_or_else(|_| fail("--bind must be an IP address, such as your tailnet IP."));
     if let Err(error) = pandacode_lib::remote_core::serve(pandacode_lib::remote_core::Options {
         address: (ip, port).into(),
         data_dir,
         allowed_origins,
+        mcp_port,
     }) {
         fail(&error);
     }

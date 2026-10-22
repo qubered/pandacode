@@ -67,6 +67,8 @@ pub struct Options {
     pub data_dir: Option<PathBuf>,
     /// Extra page origins (such as `http://laptop:1420`) allowed to connect.
     pub allowed_origins: Vec<String>,
+    /// Serve the orchestrator MCP endpoint on this port of `address`'s IP.
+    pub mcp_port: Option<u16>,
 }
 
 /// Which browser pages may connect. There is no login: the tailnet is the boundary.
@@ -122,11 +124,32 @@ pub(crate) fn start(data_dir: Option<PathBuf>) -> Result<Core, String> {
     Ok(Core { app, webview, events, dir })
 }
 
+/// Prints the orchestrator's MCP token (creating it if needed) without starting the core.
+pub fn print_mcp_token(data_dir: Option<PathBuf>) -> Result<(), String> {
+    let dir = match data_dir {
+        Some(dir) => dir,
+        None => {
+            let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+            context.config_mut().identifier = IDENTIFIER.into();
+            let app = tauri::test::mock_builder().build(context).map_err(|e| e.to_string())?;
+            app.path().app_data_dir().map_err(|e| e.to_string())?
+        }
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    crate::secret_store::file::use_folder(&dir);
+    println!("{}", crate::orchestrator::token(true).ok_or("Could not create the token.")?);
+    Ok(())
+}
+
 /// Starts the core and serves clients until SIGINT/SIGTERM.
 pub fn serve(options: Options) -> Result<(), String> {
     let Core { app, webview, events, dir } = start(options.data_dir)?;
     let origins = Origins::new(options.allowed_origins);
     let handle = app.handle().clone();
+    if let Some(port) = options.mcp_port {
+        crate::orchestrator::override_endpoint(&handle, &options.address.ip().to_string(), port)?;
+        eprintln!("PandaCode core: orchestrator MCP on http://{}:{port}/mcp", options.address.ip());
+    }
     eprintln!("PandaCode core: data in {}", dir.display());
     tauri::async_runtime::block_on(async move {
         let listener = TcpListener::bind(options.address)
