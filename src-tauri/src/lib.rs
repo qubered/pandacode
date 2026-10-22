@@ -1079,8 +1079,13 @@ async fn prepare_command(
     }))
 }
 
+/// The user's `send_message` from the UI; orchestrator tools call `send_message_inner` directly
+/// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
-async fn send_message(
+async fn send_message(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, text: String, image_ids: Option<Vec<String>>, moodboard_ids: Option<Vec<String>>) -> Result<()> {
+    send_message_inner(app, state, session_id, text, image_ids, moodboard_ids).await
+}
+pub(crate) async fn send_message_inner(
     app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
@@ -1971,8 +1976,13 @@ async fn stop_session(
     }
     Ok(())
 }
+/// The user's `respond_approval` from the UI; orchestrator tools call `respond_approval_inner` directly
+/// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
-async fn respond_approval(
+async fn respond_approval(state: State<'_, AppState>, session_id: String, request_id: String, approved: bool) -> Result<()> {
+    respond_approval_inner(state, session_id, request_id, approved).await
+}
+pub(crate) async fn respond_approval_inner(
     state: State<'_, AppState>,
     session_id: String,
     request_id: String,
@@ -2000,8 +2010,13 @@ async fn list_provider_models(provider: String, force: Option<bool>) -> Result<V
     providers::list_models(&provider).await
 }
 
+/// The user's `respond_user_input` from the UI; orchestrator tools call `respond_user_input_inner` directly
+/// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
-async fn respond_user_input(
+async fn respond_user_input(state: State<'_, AppState>, session_id: String, request_id: String, response: serde_json::Value) -> Result<()> {
+    respond_user_input_inner(state, session_id, request_id, response).await
+}
+pub(crate) async fn respond_user_input_inner(
     state: State<'_, AppState>,
     session_id: String,
     request_id: String,

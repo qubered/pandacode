@@ -191,8 +191,13 @@ pub async fn queue_restore(state: State<'_, AppState>, entry: QueuedMessage) -> 
 
 /// Sends a message into the running turn. On success it is saved to the transcript;
 /// a harness that cannot steer returns an error and the message should stay queued.
+/// The user's `steer_task` from the UI; orchestrator tools call `steer_task_inner` directly
+/// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
 pub async fn steer_task(state: State<'_, AppState>, session_id: String, text: String) -> Result<()> {
+    steer_task_inner(state, session_id, text).await
+}
+pub(crate) async fn steer_task_inner(state: State<'_, AppState>, session_id: String, text: String) -> Result<()> {
     let text = text.trim().to_owned();
     if text.is_empty() {
         return Err("Write a message to steer with.".into());
