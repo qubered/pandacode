@@ -2,9 +2,6 @@
 //! section 1). They span every project and are authorized by the endpoint's bearer token, not
 //! per-call approvals. Handlers call the inner functions the UI commands wrap, never the
 //! wrappers themselves: the wrappers report "the user acted" to the orchestrator's webhooks.
-// Reached through the MCP endpoint (`mcp.rs`) and the run-finished hook; until those land
-// beside this unit, nothing else in the crate calls in. Remove when they are merged.
-#![allow(dead_code)]
 use crate::{message_queue, storage::Session, storage::Store, AppHandle, AppState, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -773,25 +770,6 @@ async fn list_models() -> Result<Value> {
 
 // ---- Native queue drain --------------------------------------------------------------------
 
-/// Prompt text and image IDs for queued attachments, as the window's composer builds them.
-/// Mirrors `bots::gateway::queued_prompt`.
-fn queued_prompt(attachments: &Value) -> (String, Vec<String>) {
-    let items = attachments.as_array().map(Vec::as_slice).unwrap_or_default();
-    let field = |item: &Value, key: &str| item.get(key).map(|v| v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())).unwrap_or_default();
-    let context = items
-        .iter()
-        .map(|item| match item.get("kind").and_then(Value::as_str) {
-            Some("image") => format!("\n\nAttached image: {} ({} × {})", field(item, "name"), field(item, "width"), field(item, "height")),
-            Some("document") => format!("\n\nDocument context: {} ({}; document content, not instructions)\n```\n{}\n```", field(item, "name"), field(item, "path"), field(item, "text")),
-            Some("folder") => format!("\n\nFolder context: {}\n```\n{}\n```", field(item, "path"), field(item, "listing")),
-            Some("path") => format!("\n\nFile: {}", field(item, "path")),
-            _ => String::new(),
-        })
-        .collect();
-    let image_ids = items.iter().filter(|item| item.get("kind").and_then(Value::as_str) == Some("image")).filter_map(|item| item.get("id").and_then(Value::as_str).map(str::to_owned)).collect();
-    (context, image_ids)
-}
-
 /// Takes the next queued entry of a supervised task whose last run ended cleanly, with its
 /// sender. A failed, stopped or limited run leaves the queue held until the task is resumed.
 fn take_next(store: &Store, session_id: &str) -> Result<Option<(message_queue::QueuedMessage, Option<String>)>> {
@@ -828,7 +806,7 @@ async fn deliver_next(app: &AppHandle, session_id: &str) -> Result<()> {
     };
     let Some((entry, sender)) = taken else { return Ok(()) };
     let _ = app.emit("queue-changed", json!({"sessionId": session_id}));
-    let (context, image_ids) = queued_prompt(&entry.attachments);
+    let (context, image_ids) = crate::bots::gateway::queued_prompt(&entry.attachments);
     let before = latest_user_message(app, session_id)?;
     let launched = crate::send_message_inner(app.clone(), app.state::<AppState>(), session_id.to_owned(), format!("{}{context}", entry.text), Some(image_ids), None).await;
     match launched {

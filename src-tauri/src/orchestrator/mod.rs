@@ -86,10 +86,13 @@ pub fn setup(app: &AppHandle, dir: &Path) -> Result<()> {
     let settings = std::fs::read(&file).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
     app.manage(Orchestrator { file, settings: RwLock::new(settings), server: Mutex::new(None) });
     hooks::start(app);
+    // Remember approvals and questions from the start, so `read_task` can show their text.
+    tools::start(app);
     restart(app)
 }
 
 /// Headless flags: enable the endpoint on `bind:port` for this run without saving.
+#[cfg_attr(not(feature = "headless"), allow(dead_code))]
 pub fn override_endpoint(app: &AppHandle, bind: &str, port: u16) -> Result<()> {
     if let Ok(mut settings) = app.state::<Orchestrator>().settings.write() {
         settings.enabled = true;

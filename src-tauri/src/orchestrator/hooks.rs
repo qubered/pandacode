@@ -26,7 +26,6 @@ pub enum Event {
     /// An empty `last_reply` is read from the task's latest assistant message.
     HandedOver { last_reply: String },
     /// Sent by the orchestrator's `release_task` tool.
-    #[allow(dead_code)]
     Released,
 }
 

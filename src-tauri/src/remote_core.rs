@@ -360,22 +360,36 @@ mod tests {
         }
     }
     async fn next(client: &mut Client) -> Value {
+        next_within(client, Duration::from_secs(10)).await
+    }
+    async fn next_within(client: &mut Client, wait: Duration) -> Value {
         loop {
-            match tokio::time::timeout(Duration::from_secs(10), client.next()).await.expect("core answered").unwrap().unwrap() {
+            match tokio::time::timeout(wait, client.next()).await.expect("core answered").unwrap().unwrap() {
                 Message::Text(text) => return serde_json::from_str(&text).unwrap(),
                 _ => continue,
             }
         }
     }
-    async fn until_output(client: &mut Client, events: &mut Vec<Value>, terminal: &str, needle: &str) -> u64 {
+    /// Writes `command` until its output contains `needle`. The user's interactive shell runs
+    /// its startup files first, which can be slow or can swallow early input.
+    async fn until_output(client: &mut Client, seen_events: &mut Vec<Value>, terminal: &str, command: &str, needle: &str, next_id: &mut u64) -> u64 {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
         let mut seen = String::new();
+        let mut resend = tokio::time::Instant::now();
         loop {
-            let frame = next(client).await;
+            assert!(tokio::time::Instant::now() < deadline, "terminal never printed {needle}");
+            if tokio::time::Instant::now() >= resend {
+                *next_id += 1;
+                let frame = json!({ "id": *next_id, "command": "write_terminal", "args": { "terminalId": terminal, "data": command } });
+                client.send(Message::Text(frame.to_string().into())).await.unwrap();
+                resend = tokio::time::Instant::now() + Duration::from_secs(3);
+            }
+            let Ok(frame) = tokio::time::timeout(Duration::from_secs(1), next(client)).await else { continue };
             if frame["event"] == "terminal-event" && frame["payload"]["terminalId"] == terminal {
                 seen.push_str(frame["payload"]["data"].as_str().unwrap_or_default());
                 if seen.contains(needle) { return frame["payload"]["end"].as_u64().unwrap(); }
             }
-            events.push(frame);
+            seen_events.push(frame);
         }
     }
 
@@ -431,8 +445,8 @@ mod tests {
             // A terminal streams both ways.
             let started = call(&mut client, &mut seen, 8, "start_terminal", json!({ "projectId": project_id, "cols": 80, "rows": 24 })).await;
             let terminal = started["result"].as_str().expect("terminal id").to_owned();
-            call(&mut client, &mut seen, 9, "write_terminal", json!({ "terminalId": terminal, "data": "echo first-$((40+2))\n" })).await;
-            let end = until_output(&mut client, &mut seen, &terminal, "first-42").await;
+            let mut writes = 1000;
+            let end = until_output(&mut client, &mut seen, &terminal, "echo first-$((40+2))\n", "first-42", &mut writes).await;
 
             // The client goes away; the shell keeps running and a new client finds it.
             client.close(None).await.unwrap();
@@ -445,8 +459,7 @@ mod tests {
             assert!(snapshot["result"]["data"].as_str().unwrap().contains("first-42"));
             assert!(snapshot["result"]["end"].as_u64().unwrap() >= end);
             client.send(Message::Text(json!({ "subscribe": ["terminal-event"] }).to_string().into())).await.unwrap();
-            call(&mut client, &mut seen, 3, "write_terminal", json!({ "terminalId": terminal, "data": "echo second-$((40+3))\n" })).await;
-            let later = until_output(&mut client, &mut seen, &terminal, "second-43").await;
+            let later = until_output(&mut client, &mut seen, &terminal, "echo second-$((40+3))\n", "second-43", &mut writes).await;
             assert!(later > snapshot["result"]["end"].as_u64().unwrap());
             let closed = call(&mut client, &mut seen, 4, "close_terminal", json!({ "terminalId": terminal })).await;
             assert_eq!(closed["ok"], true);

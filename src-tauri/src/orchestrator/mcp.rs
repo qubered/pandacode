@@ -32,6 +32,10 @@ type TokenFn = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 trait Dispatcher: Send + Sync + 'static {
     fn catalog(&self) -> Vec<Value>;
     fn call(&self, name: String, args: Value) -> Boxed<Result<Value>>;
+    /// A one-line summary written before the JSON in a tool result's text.
+    fn summary(&self, _name: &str, _result: &Value) -> Option<String> {
+        None
+    }
 }
 
 /// The real tools. A call runs as its own task so closing the connection or stopping the
@@ -40,6 +44,9 @@ struct Tools(AppHandle);
 impl Dispatcher for Tools {
     fn catalog(&self) -> Vec<Value> {
         tools::catalog()
+    }
+    fn summary(&self, name: &str, result: &Value) -> Option<String> {
+        Some(tools::summary(name, result))
     }
     fn call(&self, name: String, args: Value) -> Boxed<Result<Value>> {
         let app = self.0.clone();
@@ -358,7 +365,11 @@ async fn call_tool(dispatcher: &dyn Dispatcher, params: &Value) -> std::result::
     };
     Ok(match dispatcher.call(name.to_owned(), args).await {
         Ok(value) => {
-            let mut result = json!({"content": [{"type": "text", "text": value.to_string()}], "isError": false});
+            let text = match dispatcher.summary(name, &value) {
+                Some(summary) => format!("{summary}\n{value}"),
+                None => value.to_string(),
+            };
+            let mut result = json!({"content": [{"type": "text", "text": text}], "isError": false});
             if value.is_object() {
                 result["structuredContent"] = value;
             }
