@@ -6,7 +6,8 @@ import { appUpdates, describeUpdate } from './app-updates';
 export const PROJECT_LINKS = {
   repository: 'https://github.com/aicodeking/pandacode',
   issues: 'https://github.com/aicodeking/pandacode/issues',
-  releases: 'https://github.com/aicodeking/pandacode/releases',
+  // This fork's builds; upstream's would not include the fork's features.
+  releases: 'https://github.com/qubered/pandacode/releases',
   license: 'https://github.com/aicodeking/pandacode/blob/main/LICENSE',
 } as const;
 

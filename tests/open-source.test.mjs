@@ -32,7 +32,8 @@ test('no app source references the paid PandaCode service or the old support por
 
 test('updates come only from signed GitHub Releases, and nothing reads license keys', async () => {
   const config = JSON.parse(await readFile(join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
-  assert.deepEqual(config.plugins?.updater?.endpoints, ['https://github.com/aicodeking/pandacode/releases/latest/download/latest.json']);
+  // This fork updates from its own releases, never upstream's, which would replace it with upstream PandaCode.
+  assert.deepEqual(config.plugins?.updater?.endpoints, ['https://github.com/qubered/pandacode/releases/latest/download/latest.json']);
   assert.match(config.plugins.updater.pubkey, /^[A-Za-z0-9+/=]{40,}$/, 'a public key verifies every update');
   // Update files are produced only by builds that hold the signing key (scripts/release/build.mjs).
   assert.equal(config.bundle.createUpdaterArtifacts, undefined);
