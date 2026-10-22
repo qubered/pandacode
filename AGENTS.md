@@ -5,12 +5,74 @@
 - Follow [docs/releasing.md](docs/releasing.md) for shipping: `npm run release:version X.Y.Z`, write `releases/X.Y.Z.md`, push tag `vX.Y.Z`. `.github/workflows/release.yml` builds macOS (Apple silicon), Windows x64 and Linux x64 and attaches them to a GitHub Release; signing is optional. Only release when the user asks.
 - Contributor setup and PR process: [CONTRIBUTING.md](CONTRIBUTING.md). CI is `.github/workflows/ci.yml`.
 
+## This fork (qubered/pandacode)
+This is a fork of PandaCode (https://github.com/aicodeking/pandacode). The README and About keep that attribution, as the license requires.
+
+It adds three things:
+- **Remote core** ([docs/remote-core.md](docs/remote-core.md)): the core runs headless on a server, and a browser or the desktop app drives it over a WebSocket.
+- **Hermes orchestrator** ([docs/hermes.md](docs/hermes.md), [spec](docs/superpowers/specs/2026-10-22-hermes-orchestrator-design.md)): an outside agent drives tasks through MCP tools and is woken by signed webhooks.
+- **Desktop remote mode:** the desktop app switches between its own core and a remote one.
+
+`main` is the fork's live branch. Work happens on a feature branch, then a PR into `main`, merged with a merge commit.
+
+### Builds and modes
+- **Cargo features are mutually exclusive:** `desktop` (the default, the Tauri app) or `headless` (`pandacode-core`, built with `--no-default-features --features headless`). Enabling both, or neither, is a `compile_error!`.
+  - `crate::Rt`, `AppHandle` and `WebviewWindow` are aliases for the selected runtime: Wry for desktop, `tauri::test::MockRuntime` for headless.
+  - `browser`, `overlay` and `appearance` compile only for `desktop`. `vm`, `simulator` and `cloud` compile in both, but the headless WebSocket refuses their commands.
+  - `default-run = "pandacode"`, so `cargo run` and `tauri dev` start the desktop app.
+- **`lib.rs` shares startup between both binaries:** `setup_core`, `invoke_handler` (one `generate_handler!` with `#[cfg(feature = "desktop")]` on desktop-only commands), `begin_shutdown` / `finish_shutdown` / `release_resources`. `run()` is desktop-only.
+- **`remote_core.rs` (headless only):**
+  - Dispatches `{id, command, args}` WebSocket frames through `invoke_handler` on a mock `"main"` webview, so argument names, `State` and main-window checks match the desktop app.
+  - Forwards the events listed in `CHANNELS` to clients that subscribed to them. `channels_cover_every_emit` fails if a new channel is missing from the list.
+  - Refuses commands matched by `unavailable()` (browser, overlay, simulator, vm, cloud, jev, file preview), and answers `configure_window_appearance` itself.
+  - `Origins` accepts loopback pages, the desktop app (`tauri://localhost`, `http(s)://tauri.localhost`), `--allow-origin` values, and clients that send no Origin. Browsers apply no CORS to WebSockets, so this check is what stops websites from driving the core.
+- **Linux builds:** `docker/pandacode-core.Dockerfile` builds the Linux binary on Ubuntu 22.04 (glibc 2.35). `tauri-runtime` always needs the WebKitGTK and GTK headers to build, but the headless binary loads only GTK 3 at run time.
+- **Frontend modes** (`src/core-mode.ts`, pure and unit tested; exported from `bridge.ts`):
+  - `preview`: a browser with fixtures.
+  - `native`: the desktop app on its own core.
+  - `remote`: a WebSocket core, chosen with `?core=` in a browser or Settings → General → Remote core in the desktop app (saved in localStorage).
+  - `desktop`: the Tauri shell is present.
+  - Gate *window* features (appearance, zoom, updater, version, Save dialog, native drag-drop) on `desktop`, and send their commands with `localCall`. Gate things that need the *local core* on `native`. In remote mode `call` goes to the WebSocket, except `LOCAL_IN_REMOTE` (links and support), which stays on this machine.
+- **Remote transport:** `src/remote-transport.ts` queues calls until the socket opens, never replays a call that was in flight when the socket dropped, re-subscribes after reconnecting, and calls `onReconnect`, which `main.ts` uses to reload sessions and the open thread. File and folder pickers in remote mode use `src/remote-picker.ts` over `fs_home` / `fs_list` (`remote_files.rs`).
+- **Terminals** keep 256 KB of scrollback with byte offsets (`end` on `terminal-event`) and an owner (project, task, kind). `list_terminals` / `terminal_snapshot` let a reconnecting remote page adopt a live shell (`adoptable` in `src/terminal.ts`).
+- **The headless core keeps secrets** in an owner-only `secrets.json` in its data folder (`secret_store::file`), including provider keys, instead of a keyring.
+- **macOS:** `src-tauri/Info.plist` sets `NSAllowsArbitraryLoadsInWebContent`. Without it, App Transport Security blocks `ws://` to Tailscale `100.x` addresses, and `NSAllowsLocalNetworking` does not cover them. The app CSP allows `ws: wss:` in `connect-src`.
+- **Updates:** the updater and About → Releases point at qubered/pandacode, never upstream, which would replace a fork build with plain PandaCode. Publishing fork releases needs the fork's own updater signing key.
+
+### Orchestrator (`src-tauri/src/orchestrator/`)
+- **Files:**
+  - `mod.rs`: settings (`orchestrator.json`; the token and webhook secret in the secret store), `clamp_mode`, endpoint lifecycle, and the `orchestrator_*` / `set_task_supervisor` commands.
+  - `mcp.rs`: hand-rolled HTTP JSON-RPC MCP. It needs the bearer token, refuses any request with an `Origin`, and spawns each tool call.
+  - `tools.rs`: the 12 `pandacode_*` tools, plus `drain_next`.
+  - `hooks.rs`: signed webhooks (Hermes "Generic V2"), delivered from a FIFO with retries.
+- **Data (schema 26):** `sessions.supervisor` (who supervises; NULL is the user), `messages.sender` and `queued_messages.sender`.
+- **Supervision rules:**
+  - The orchestrator answers approvals only on tasks it supervises.
+  - It never launches a task above `maxMode`, nor messages one running above it (`mode_allowed`).
+  - Supervised tasks drain their queue in the core (`tools::drain_next`, called at run end). The window skips `dispatchQueue` for them and hides Send now.
+- **Human vs orchestrator actions:** the UI command wrappers (`send_message`, `respond_approval`, `respond_user_input`, `queue_add`, `steer_task`) fire "the user acted" webhooks. Orchestrator tools must call the `*_inner` functions instead, or their actions are reported as the user's.
+- **Tool code** must stay `Send`: never hold a store `MutexGuard` across an `.await`.
+- **Defaults and switches:** `pandacode-core --mcp-port N` enables the endpoint, and `--print-mcp-token` prints the token. The UI is Settings → Agents → Orchestrator. The default `maxMode` is `auto`; in that mode the agent CLI itself decides which shell commands run without asking.
+
+### When adding a command or event
+- **New command:**
+  - If it needs a window or the host's display, cfg it `desktop` or add it to `remote_core::unavailable`.
+  - If it is a window-level feature, the frontend calls it with `localCall`.
+  - Add a preview mock, as for every command.
+- **New event channel:** add it to `remote_core::CHANNELS`. The test fails until you do.
+- **New `sessions` column:** add it to both `SELECT … FROM sessions` lists in `storage.rs` and to `session_row`.
+
 ## Verify
 - `npx tsc --noEmit` — typecheck (also runs inside `npm run build`).
 - `npm test` — Node unit tests (`tests/*.test.mjs`).
 - `npm run test:release` — release script tests (`scripts/release/*.test.mjs`).
 - `npx playwright test` — browser suite against the Vite preview (`npm run dev` on 127.0.0.1:1420 is started/reused automatically; needs Google Chrome at `/Applications/Google Chrome.app`). Full run ≈ 3.5 min at the default 4 workers (`PW_WORKERS=N` overrides); pass file paths or `-g "title"` for a subset.
 - `npx playwright test -c playwright.webkit.config.ts` — the same suite in WebKit (the real target is WKWebView).
+- `npm run test:rust` and `npm run test:rust:headless`: the Rust tests in each build.
+- Clippy must pass `-D warnings` in both builds, as CI runs it: add `--no-default-features --features headless` for the second.
+- `npm run core -- --port 7878`: run a headless core locally, then open `http://127.0.0.1:1420/?core=ws://127.0.0.1:7878`.
+- **Known Playwright failures:** six specs fail on unmodified upstream too: `ui.spec.ts` 1236, 2380, 2401 and 2477; `jev-assist.spec.ts` 93; `jev-live.spec.ts` 127. A few others (simulator, `ui.spec.ts` 2723) are flaky under load and pass when rerun alone.
+- **Desktop window behavior** (App Transport Security, CSP, `tauri://` origin) only shows up in a real `.app`. A browser or a CLI WKWebView does not reproduce it. Build one with `npm run package:fast` and ad-hoc sign it with `codesign --force --deep --sign -`.
 
 ## UI conventions
 - Color: never write a literal accent color. Use `--accent`, `--accent-rgb` (for `rgb(var(--accent-rgb) / a)`), `--on-accent` (text on accent fills), `--accent-dim`/`--accent-ink`, `--focus`, `--accent-hover`, `--accent-tint`. `src/palette.ts` sets them from the user's choice (wallpaper accent from `src/wallpaper-accents.ts`, classic yellow, a swatch) or from an imported VS Code theme (`html[data-vsix]`, mapped in `src/palette-core.ts`), which also sets the surface tokens and holds still when wallpapers change. Themes are imported natively by `vsix_themes.rs` (colors only, nothing executed). Regenerate `wallpaper-accents.ts` when scenes change; `tests/palette.test.mjs` checks every scene and 23 recorded real themes for contrast.

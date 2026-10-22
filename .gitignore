@@ -19,3 +19,7 @@ website/.astro/
 *.key
 *.pem
 dist-core/
+
+# Machine-specific Claude Code notes (servers, deployment); never commit.
+CLAUDE.local.md
+.claude/worktrees/

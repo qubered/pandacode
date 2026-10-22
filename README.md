@@ -1,10 +1,18 @@
 # PandaCode (remote-core fork)
 
-> **This is a fork of PandaCode** — upstream: <https://github.com/aicodeking/pandacode>.
-> It adds a *remote* mode: the Rust core runs headless on a server and the
-> frontend connects to it over a WebSocket (open the app with
-> `?core=ws://host:port`). See [docs/remote-core.md](docs/remote-core.md).
-> Everything below is upstream's README.
+> **This is a fork of PandaCode.** Upstream: <https://github.com/aicodeking/pandacode>.
+> The fork adds:
+> - **Remote core:** run the Rust core headless on a server (`pandacode-core`) and
+>   drive it from a browser (`?core=ws://host:port`) or the desktop app (Settings →
+>   General → Remote core). Agents keep working when your laptop is closed. See
+>   [docs/remote-core.md](docs/remote-core.md).
+> - **Hermes orchestration:** an MCP endpoint and signed webhooks, so
+>   [Hermes Agent](https://hermes-agent.nousresearch.com/) (or any MCP client) can
+>   launch, supervise and answer tasks while you keep working in the UI. See
+>   [docs/hermes.md](docs/hermes.md).
+>
+> Fork builds update only from this fork's releases. Everything below is upstream's
+> README.
 
 A small, native desktop workspace for coding agents. PandaCode runs the coding
 CLIs you already use — **Claude Code, Codex, Kimi Code, OpenCode, GLM Coding
