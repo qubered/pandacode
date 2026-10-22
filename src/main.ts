@@ -44,6 +44,7 @@ import { JevActivity } from './jev-activity';
 import { initializeSidebarResizing } from './sidebar-resize';
 import { changeUiScale, initializeUiSizing, setUiScale } from './ui-size';
 import { approvalBarHtml } from './approval-bar';
+import { orchestratorLabel, supervisorBadge } from './orchestrator';
 import { createThreadFind } from './thread-find';
 import { botAvatar, botsBarHtml, botsListHtml, botsPanelHeadHtml, storedSidebarView, storeSidebarView, syncSeen, type SidebarView } from './sidebar-bots';
 import { connectAgentUiActions, type AgentUiAction } from './agent-ui-actions';
@@ -856,13 +857,14 @@ function renderNavigation(): void {
     const projectName = `<span class="task-project">${escape(p?.name ?? 'Project')}</span>`;
     // Inside a project's folder the heading already names the project: one line with the
     // title, then the worktree mark, linked PR or issue, status, age and harness.
-    if (inFolder) return `${button}<span class="task-line task-top"><span class="task-title">${escape(s.title)}</span>${worktreeMark}${linkMark}${pin}${projectName}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`;
+    const supervisor = supervisorBadge(s.supervisor, escape);
+    if (inFolder) return `${button}<span class="task-line task-top"><span class="task-title">${escape(s.title)}</span>${worktreeMark}${linkMark}${supervisor}${pin}${projectName}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`;
     // With one project chosen the filter names it: two lines, the title and then the rest.
     const head = inProject
-      ? `<span class="task-line task-top"><span class="task-title">${escape(s.title)}</span>${signals}</span>`
+      ? `<span class="task-line task-top"><span class="task-title">${escape(s.title)}</span>${supervisor}${signals}</span>`
       : `<span class="task-line task-head">${projectAppIcon(s.projectId, p?.name ?? '')}<span class="task-checkout">${escape(checkout)}</span>${signals}</span><span class="task-title">${escape(s.title)}</span>`;
     return `${button}${head}`
-      + `<span class="task-line task-meta">${branch}${linkMark}${pin}${projectName}${providerLogo(s.provider, 'task-provider')}</span></button>`;
+      + `<span class="task-line task-meta">${branch}${linkMark}${supervisor}${pin}${projectName}${providerLogo(s.provider, 'task-provider')}</span></button>`;
   };
   const pinned = visible.filter(s => s.pinned).sort(compareThreadOrder);
   const folders = folderGroups({
@@ -933,12 +935,37 @@ function renderHeader(): void {
   const fresh = newTaskView(), bot = botForThread();
   $('.conversation-pane').classList.toggle('new-task-page', fresh);
   $('.conversation-pane').classList.toggle('bot-thread', Boolean(bot));
-  $('#breadcrumb').innerHTML = bot ? botCrumb(bot) : p && !fresh ? `${icon('folder')}<button data-action="select-project" data-id="${escape(p.id)}">${escape(p.name)}</button>` : '';
+  $('#breadcrumb').innerHTML = bot ? botCrumb(bot) : p && !fresh ? `${icon('folder')}<button data-action="select-project" data-id="${escape(p.id)}">${escape(p.name)}</button>${supervisorCrumb()}` : '';
   const s = session(), bar = document.querySelector<HTMLElement>('#composer-area .composer-context');
   if (s && bar) {
     const markup = worktrees.contextBar(s, fresh);
     if (bar.outerHTML !== markup && !bar.querySelector('[aria-expanded="true"]')) bar.outerHTML = markup;
   }
+}
+/** Whether an orchestrator (Hermes) may be handed tasks, and what it is called; read at startup and after Settings saves. */
+let orchestrator = { enabled: false, name: 'hermes' };
+async function loadOrchestrator(): Promise<void> {
+  try {
+    const view = await call<{ enabled: boolean; name: string }>('orchestrator_settings');
+    orchestrator = { enabled: view.enabled, name: view.name };
+  } catch { orchestrator = { enabled: false, name: 'hermes' }; }
+  if (session()) renderHeader();
+}
+/** The open task's supervision in the header: who supervises, and a way to take the task back. */
+function supervisorCrumb(): string {
+  const supervisor = session()?.supervisor;
+  if (!supervisor) return '';
+  const name = escape(orchestratorLabel(supervisor));
+  return `<div class="supervisor-crumb"><span class="supervisor-label">Supervised by ${name}</span><button type="button" class="secondary-button" data-action="take-over" title="Take this task back from ${name}">Take over</button></div>`;
+}
+/** Hands the open task to the orchestrator, or takes it back (null). */
+async function setSupervisor(id: string, supervisor: string | null): Promise<void> {
+  const saved = await call<Session>('set_task_supervisor', { sessionId: id, supervisor });
+  const task = state.sessions.find(item => item.id === id);
+  if (task) task.supervisor = saved?.supervisor ?? supervisor;
+  renderNavigation(); renderHeader(); renderApprovalBar();
+  notify(supervisor ? `${orchestratorLabel(supervisor)} is supervising this task` : 'You took this task over');
+  await reloadSessions();
 }
 /** What the empty prompt invites: a task, or a message to the bot whose thread this is. */
 function composerPlaceholder(): string { const bot = botForThread(); return bot ? `Message ${escape(bot.name)}…` : 'Describe a task…'; }
@@ -1098,7 +1125,7 @@ function messageHtml(m: Message): string {
   if (m.role === 'error') return `<div class="message-error">${icon('alert')}<span>${escape(m.content)}</span></div>`;
   const isUser = m.role === 'user';
   const author = historicalProvider(m, state.messages, session()?.provider ?? state.defaultProvider);
-  return `<article class="message ${isUser ? 'user-message' : 'agent-message'}" data-message-id="${m.id}"><div class="message-meta"><span class="message-avatar ${isUser ? 'user-avatar' : ''}">${isUser ? 'Y' : providerLogo(author)}</span><strong>${isUser ? 'You' : escape(provider(author)?.name || 'Agent')}</strong><time>${formatTime(m.createdAt)}</time></div><div class="message-content ${isUser ? '' : 'markdown'}" ${isUser ? '' : `data-markdown="${m.id}"`}>${isUser ? userContent(m.content) : escape(m.content)}</div>${messageActionsHtml(m.sessionId, m.id, m.id > 0 && (isUser || m.role === 'assistant'))}</article>`;
+  return `<article class="message ${isUser ? 'user-message' : 'agent-message'}" data-message-id="${m.id}"><div class="message-meta"><span class="message-avatar ${isUser ? 'user-avatar' : ''}">${isUser ? (m.sender ? escape(orchestratorLabel(m.sender).charAt(0)) : 'Y') : providerLogo(author)}</span><strong>${isUser ? (m.sender ? escape(orchestratorLabel(m.sender)) : 'You') : escape(provider(author)?.name || 'Agent')}</strong><time>${formatTime(m.createdAt)}</time></div><div class="message-content ${isUser ? '' : 'markdown'}" ${isUser ? '' : `data-markdown="${m.id}"`}>${isUser ? userContent(m.content) : escape(m.content)}</div>${messageActionsHtml(m.sessionId, m.id, m.id > 0 && (isUser || m.role === 'assistant'))}</article>`;
 }
 // Context appended at send time (files, documents, folders, GitHub, browser, images) folds
 // behind one summary so the transcript reads as what you said, with the payload a click away.
@@ -1283,11 +1310,13 @@ function renderApprovalBar(): void {
   const host = document.querySelector<HTMLElement>('#approval-bar');
   if (!host) return;
   const sessionId = state.sessionId, approvals = [...state.streams.get(sessionId)?.approvals ?? []].map(([id, text]) => ({ id, text }));
-  const html = approvalBarHtml(approvals, { busy: id => pendingApprovals.has(sessionId + id), expanded: approvalGroupOpen, details: new Set([...approvalDetails].filter(item => item.startsWith(sessionId)).map(item => item.slice(sessionId.length))) });
+  const supervisor = session()?.supervisor;
+  const html = approvalBarHtml(approvals, { note: supervisor ? supervisorNote(supervisor) : undefined, busy: id => pendingApprovals.has(sessionId + id), expanded: approvalGroupOpen, details: new Set([...approvalDetails].filter(item => item.startsWith(sessionId)).map(item => item.slice(sessionId.length))) });
   if (host.innerHTML === html) return;
   host.innerHTML = html;
   if (!approvals.length) approvalGroupOpen = false;
 }
+const supervisorNote = (supervisor: string): string => `${orchestratorLabel(supervisor)} is supervising — you can still answer`;
 async function respondApproval(sessionId: string, id: string, approved: boolean): Promise<void> {
   const current = state.streams.get(sessionId), approvalKey = sessionId + id;
   if (!current?.approvals.has(id) || pendingApprovals.has(approvalKey)) return;
@@ -2006,7 +2035,7 @@ async function dispatchQueue(id: string): Promise<void> {
   const task = state.sessions.find(item => item.id === id);
   const first = sendFirst.get(id), next = queueOf(id).find(item => item.id === first?.id) ?? queueOf(id)[0];
   if (first && next?.id !== first.id) sendFirst.delete(id);
-  if (!task || !next || botProjects.has(task.projectId) || (state.queueHolds.has(id) && next.id !== first?.id) || state.queueBusy.has(id) || isRunning(id) || finishingStreams.has(id) || configuringSessions.has(id) || task.archived) return;
+  if (!task || !next || botProjects.has(task.projectId) || task.supervisor || (state.queueHolds.has(id) && next.id !== first?.id) || state.queueBusy.has(id) || isRunning(id) || finishingStreams.has(id) || configuringSessions.has(id) || task.archived) return;
   if (limitActive(task)) { state.queueHolds.set(id, 'limited'); if (id === state.sessionId) renderComposer(); return; }
   state.queueBusy.add(id);
   try {
@@ -2336,7 +2365,7 @@ function onAgent(event: AgentEvent): void {
       if (!current.inputs.size && current.status === 'Waiting for your answer') updateStreamStatus(current, 'Continuing task');
       if (event.sessionId === state.sessionId) renderStream();
       scheduleNavigation();
-    }));
+    }, s?.supervisor ? supervisorNote(s.supervisor) : undefined));
     current.revision++; updateStreamStatus(current, 'Waiting for your answer');
     if (event.sessionId !== state.sessionId) notify(`${s?.title ?? 'Task'} needs your answer`);
   }
@@ -2851,6 +2880,8 @@ async function showTaskMenu(anchor: HTMLElement): Promise<void> {
     { id: 'jev-tests', label: 'Browser tests with Jev', icon: 'spark' },
     ...jevDecisionsEnabled ? [{ id: 'jev-assist', label: 'Jev assistance', icon: 'spark' }] : [],
     { id: 'archive-task', label: s.archived ? 'Restore task' : 'Archive task', icon: 'archive' },
+    ...s.supervisor ? [{ id: 'take-over', label: 'Take over from ' + orchestratorLabel(s.supervisor), icon: 'back' }]
+      : orchestrator.enabled && !s.archived && !botProjects.has(s.projectId) ? [{ id: 'supervise-task', label: 'Let ' + orchestratorLabel(orchestrator.name) + ' supervise', icon: 'bot' }] : [],
     ...s.provider === 'codex' ? [{ id: 'goal', label: 'Manage goal', icon: 'spark' }, { id: 'jobs', label: 'Background commands', icon: 'terminal' }, { id: 'usage', label: 'Codex usage', icon: 'activity' }] : [],
     { id: 'harness-console', label: 'Open harness console', icon: 'terminal' },
     { id: 'copy-path', label: s.worktreePath ? 'Copy worktree path' : 'Copy project path', icon: 'copy' },
@@ -2993,6 +3024,7 @@ async function showSettings(section?: import('./settings').SettingsSection): Pro
       github: target => github.mountSettings(target, project()?.id ?? state.projects[0]?.id ?? ''),
       teams: { loadModels, call },
       cloud: { call, listen: (name, callback) => subscribe(name, callback) },
+      orchestrator: { call, changed: view => { orchestrator = { enabled: view.enabled, name: view.name }; if (session()) renderHeader(); } },
       embed: {
         colors: async target => (await import('./theme-settings')).mountThemeSettings(target, { call, notify, chooseVsix: () => import('./bridge').then(bridge => bridge.chooseVsix()) }),
         wallpapers: async target => {
@@ -3341,6 +3373,8 @@ async function action(name: string, element: HTMLElement): Promise<void> {
     case 'ui-size-increase': changeUiScale(1); break;
     case 'ui-size-reset': setUiScale(1); break;
     case 'archive-task': { const s = session(); if (s) await archiveTask(s, true); break; }
+    case 'take-over': { const s = session(); if (s?.supervisor) await setSupervisor(s.id, null); break; }
+    case 'supervise-task': { const s = session(); if (s && !s.supervisor && orchestrator.enabled) await setSupervisor(s.id, orchestrator.name); break; }
     case 'delete-task': showDeleteTask(); break;
     case 'search': showCommands(); break;
     case 'retry-response': { const finishing = finishingStreams.get(state.sessionId); if (finishing) await finishResponse(state.sessionId, finishing); break; }
@@ -3546,6 +3580,7 @@ async function boot(): Promise<void> {
   run(subscribe('bot-notification', event => { if (event?.text) notify(String(event.text).replace(/\s+/g, ' ').slice(0, 160)); }).then(() => undefined));
   // Bots appear in the sidebar once loaded; startup does not wait for them.
   botProjectsLoad = reloadBotProjects(false); run(botProjectsLoad);
+  run(loadOrchestrator());
   run(subscribe('bot-pairing', event => { if (event?.code) notify(`${event.senderName || 'Someone'} wants to talk to a bot. Approve code ${event.code} in Bots.`); }).then(() => undefined));
   // Agents can queue or remove follow-ups through their tools; an idle, unheld task sends right away.
   await subscribe('queue-changed', payload => run((async () => {
