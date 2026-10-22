@@ -1,5 +1,6 @@
 import './moodboards.css';
-import { call, native } from './bridge';
+import { call, desktop, remote } from './bridge';
+import { REMOTE_DROP } from './attachments';
 import { escape, icon } from './dom';
 
 export interface Moodboard { id: string; projectId: string; name: string; imageCount: number; updatedAt: number }
@@ -142,7 +143,7 @@ export function mountMoodboards(host: HTMLElement, options: MoodboardOptions): (
   }
   function showCreate(): void { createForm.hidden = false; nameInput.focus(); }
   async function chooseImages(): Promise<void> {
-    if (!native) { fileInput.click(); return; }
+    if (!desktop || remote) { fileInput.click(); return; }
     const result = await (await import('@tauri-apps/plugin-dialog')).open({ title: 'Add images to moodboard', multiple: true, filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] });
     if (!disposed && result) await addPaths(Array.isArray(result) ? result : [result]);
   }
@@ -232,11 +233,11 @@ export function mountMoodboards(host: HTMLElement, options: MoodboardOptions): (
   }
   host.addEventListener('click', click); host.addEventListener('change', change); host.addEventListener('paste', paste); host.addEventListener('keydown', key);
   createForm.addEventListener('submit', createBoard); canvas.addEventListener('dragover', drag); canvas.addEventListener('dragleave', leave); canvas.addEventListener('drop', drop);
-  if (native) void import('@tauri-apps/api/webview').then(module => module.getCurrentWebview().onDragDropEvent(event => {
+  if (desktop) void import('@tauri-apps/api/webview').then(module => module.getCurrentWebview().onDragDropEvent(event => {
     if (disposed || !selected) return;
     if (event.payload.type === 'over') canvas.classList.add('is-dragging');
     else if (event.payload.type === 'leave') canvas.classList.remove('is-dragging');
-    else if (event.payload.type === 'drop') { canvas.classList.remove('is-dragging'); void addPaths(event.payload.paths); }
+    else if (event.payload.type === 'drop') { canvas.classList.remove('is-dragging'); if (remote) report(REMOTE_DROP, true); else void addPaths(event.payload.paths); }
   })).then(unlisten => { if (disposed) unlisten(); else nativeUnlisten = unlisten; }).catch(() => {});
   void reload(options.initialBoardId).catch(error => report(error, true));
   return () => {

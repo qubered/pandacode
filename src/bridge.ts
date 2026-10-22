@@ -1,17 +1,24 @@
+import { coreMode, REMOTE_CORE_KEY } from './core-mode';
 import type { AgentEvent, BrowserElement, BrowserStatus, TerminalEvent } from './types';
 
-// Remote mode (`?core=ws://host:port`): a plain browser page driving a headless core over
-// a WebSocket. It is neither the preview fixtures nor Tauri, so `preview` stays false and
-// code that needs the native shell checks `native`.
-const remoteUrl = typeof location === 'undefined' ? null : coreUrl(new URLSearchParams(location.search).get('core'));
-/** Only a WebSocket address counts; anything else leaves the page in its normal mode. */
-function coreUrl(value: string | null): string | null {
-  if (!value) return null;
-  try { const url = new URL(value); return url.protocol === 'ws:' || url.protocol === 'wss:' ? url.href : null; } catch { return null; }
+// Which core this window talks to (see core-mode.ts). `native` means the desktop app on its
+// own core; `desktop` means the Tauri shell is present, also while tasks live on a remote core.
+const savedCore = (() => { try { return localStorage.getItem(REMOTE_CORE_KEY); } catch { return null; } })();
+const mode = coreMode({ search: typeof location === 'undefined' ? '' : location.search, desktop: typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window, saved: savedCore });
+const remoteUrl = mode.remoteUrl;
+export const { desktop, remote, preview, native } = mode;
+/** The remote core's address while connected to one. */
+export const remoteCore = remoteUrl;
+/** Desktop app: remember (or forget, with null) a remote core and reload onto it. */
+export function setRemoteCore(url: string | null): void {
+  try { if (url) localStorage.setItem(REMOTE_CORE_KEY, url); else localStorage.removeItem(REMOTE_CORE_KEY); } catch { /* The choice lasts this session only. */ }
+  location.reload();
 }
-export const remote = !!remoteUrl;
-export const preview = !remote && !('__TAURI_INTERNALS__' in window);
-export const native = !remote && !preview;
+/** A command for the desktop shell itself (window, files on this machine), never the remote core. */
+export async function localCall<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  if (!desktop) throw new Error(`${command} needs the desktop app.`);
+  return (await import('@tauri-apps/api/core')).invoke<T>(command, args);
+}
 let transport: Promise<import('./remote-transport').Transport> | undefined;
 const rt = () => transport ??= import('./remote-transport').then(module => module.connect(remoteUrl!));
 /** Runs after the remote transport reconnects, so the app can reload what it missed. */
@@ -26,13 +33,18 @@ async function pickRemote(options: import('./remote-picker').PickOptions): Promi
 }
 // Remote commands that act on this machine instead of the core: a link opens here, not on the
 // server. Runs before any await so the browser still sees the click that asked for it.
+// In the desktop app they go to its own shell; a browser opens them itself.
 const LOCAL_IN_REMOTE: Record<string, (args: Record<string, unknown>) => unknown> = {
   open_external_url: args => {
+    if (desktop) return localCall('open_external_url', args);
     const url = new URL(String(args.url));
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Use an HTTP or HTTPS URL.');
     window.open(url.href, '_blank', 'noopener,noreferrer');
   },
-  open_support: () => { window.open('https://github.com/aicodeking/pandacode/issues', '_blank', 'noopener,noreferrer'); },
+  open_support: () => {
+    if (desktop) return localCall('open_support');
+    window.open('https://github.com/aicodeking/pandacode/issues', '_blank', 'noopener,noreferrer');
+  },
 };
 export async function call<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   if (remote && command in LOCAL_IN_REMOTE) return LOCAL_IN_REMOTE[command](args) as T;

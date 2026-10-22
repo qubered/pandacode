@@ -75,7 +75,9 @@ pub struct Options {
 /// But any page open in a browser inside that boundary can open a WebSocket to the
 /// core, and browsers apply no CORS to WebSockets. So a connection that carries an
 /// `Origin` (every browser's does) must come from a frontend on loopback or from an
-/// origin the operator listed. Clients without an `Origin` (scripts, tests) pass.
+/// origin the operator listed. Clients without an `Origin` (scripts, tests) pass, and so does
+/// the PandaCode desktop app (`tauri://localhost`, or `http(s)://tauri.localhost` on Windows):
+/// like those clients, it is a program on the user's machine, not a website.
 #[derive(Clone, Default)]
 pub(crate) struct Origins(Arc<Vec<String>>);
 impl Origins {
@@ -86,6 +88,9 @@ impl Origins {
         let Some(origin) = origin else { return true };
         let origin = origin.trim_end_matches('/').to_ascii_lowercase();
         if self.0.contains(&origin) {
+            return true;
+        }
+        if matches!(origin.as_str(), "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost") {
             return true;
         }
         let Ok(url) = tauri::Url::parse(&origin) else { return false };
@@ -411,7 +416,7 @@ mod tests {
             let mut foreign = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(url.as_str()).unwrap();
             foreign.headers_mut().insert("origin", "https://evil.example".parse().unwrap());
             assert!(connect_async(foreign).await.is_err());
-            for allowed in ["http://127.0.0.1:1420", "http://localhost:5173", "http://laptop:1420"] {
+            for allowed in ["http://127.0.0.1:1420", "http://localhost:5173", "http://laptop:1420", "tauri://localhost", "http://tauri.localhost"] {
                 let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(url.as_str()).unwrap();
                 request.headers_mut().insert("origin", allowed.parse().unwrap());
                 assert!(connect_async(request).await.is_ok(), "{allowed}");
@@ -469,6 +474,17 @@ mod tests {
         crate::begin_shutdown(&handle);
         drop(app);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn origins_admit_local_frontends_and_the_desktop_app_only() {
+        let origins = Origins::new(vec!["http://laptop:1420".into()]);
+        for allowed in [None, Some("http://127.0.0.1:1420"), Some("https://localhost"), Some("http://laptop:1420/"), Some("tauri://localhost"), Some("http://tauri.localhost"), Some("https://tauri.localhost")] {
+            assert!(origins.allows(allowed), "{allowed:?}");
+        }
+        for refused in ["https://evil.example", "tauri://evil", "http://tauri.localhost.evil.example", "http://laptop:1421", "file://", "null", "invalid"] {
+            assert!(!origins.allows(Some(refused)), "{refused}");
+        }
     }
 
     /// Every channel the Rust side emits or the frontend listens to is forwarded,

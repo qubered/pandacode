@@ -1,4 +1,4 @@
-import { call, preview } from './bridge';
+import { desktop, localCall } from './bridge';
 import { isMac } from './platform';
 
 type AppearancePreferences = { reducedTransparency: boolean; increasedContrast: boolean; darkMode: boolean };
@@ -7,11 +7,11 @@ type ConfigureAppearance = (preferences: AppearancePreferences) => Promise<Nativ
 
 /** One native material, refreshed only for preferences or window activation. */
 export function initializeNativeAppearance(
-  configure: ConfigureAppearance = preferences => call('configure_window_appearance', preferences),
+  configure: ConfigureAppearance = preferences => localCall('configure_window_appearance', preferences),
 ): () => void {
   const root = document.documentElement;
   // Reserve native window controls before appearance IPC, including its solid fallback.
-  root.dataset.nativePlatform = !preview && isMac ? 'macos' : 'other';
+  root.dataset.nativePlatform = desktop && isMac ? 'macos' : 'other';
   const transparency = matchMedia('(prefers-reduced-transparency: reduce)');
   const contrast = matchMedia('(prefers-contrast: more)');
   let disposed = false, busy = false, dirty = false;

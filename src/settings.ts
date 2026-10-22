@@ -1,4 +1,6 @@
 import './settings.css';
+import { desktop, remote } from './bridge';
+import { mountRemoteCoreSettings, remoteCoreSettingsHtml } from './remote-core-settings';
 import { mountProviderReadiness } from './provider-readiness';
 import { escape, icon } from './dom';
 import { providerLogo } from './provider-logos';
@@ -61,6 +63,7 @@ function sectionHtml(id: SettingsSection, options: SettingsOptions): string {
   const defaultName = options.providers.find(provider => provider.id === options.defaultProvider)?.name ?? options.defaultProvider;
   switch (id) {
     case 'general': return `<div class="settings-group">${uiSizeControls()}${switchRow('compact-mode', 'Compact conversation', 'Less space between messages.', options.compact)}</div>
+      ${desktop || remote ? `<h3 class="settings-heading">Remote core</h3><div id="remote-core-settings">${remoteCoreSettingsHtml()}</div>` : ''}
       <h3 class="settings-heading">Quick launcher</h3><div id="launcher-settings"></div>`;
     case 'appearance': return `<div class="settings-group">
         <div class="setting-row"><div><strong>Theme</strong><small>${options.theme === 'dark' ? 'Dark' : 'Light'}. Imported VS Code themes keep their own.</small></div><button type="button" class="secondary-button" data-action="toggle-theme">${icon(options.theme === 'dark' ? 'sun' : 'moon')}Use ${options.theme === 'dark' ? 'light' : 'dark'}</button></div>
@@ -157,7 +160,11 @@ export function mountSettings(host: HTMLElement, options: SettingsOptions): Sett
     if (mounted.has(id)) return;
     mounted.add(id);
     const panel = panels.get(id)!;
-    if (id === 'general') cleanups.push(mountOverlaySettings(panel.querySelector<HTMLElement>('#launcher-settings')!));
+    if (id === 'general') {
+      cleanups.push(mountOverlaySettings(panel.querySelector<HTMLElement>('#launcher-settings')!));
+      const remoteCoreHost = panel.querySelector<HTMLElement>('#remote-core-settings');
+      if (remoteCoreHost) cleanups.push(mountRemoteCoreSettings(remoteCoreHost));
+    }
     if (id === 'github' && options.github) cleanups.push(options.github(panel.querySelector<HTMLElement>('#github-settings')!));
     if (id === 'teams' && options.teams) cleanups.push(mountAgentTeams(panel.querySelector<HTMLElement>('#agent-teams-settings')!, { ...options.teams, providers: options.providers }));
     if (id === 'cloud' && options.cloud) cleanups.push(mountCloudSettings(panel.querySelector<HTMLElement>('#cloud-settings')!, options.cloud));

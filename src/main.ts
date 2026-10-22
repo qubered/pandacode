@@ -22,7 +22,8 @@ import { renderTurnChanges, changeRequest, captureChangeCards, restoreChangeCard
 import { mountWallpapers } from './wallpapers';
 import type { AgentEvent, BrowserAttachment, ContextUsage, FileEntry, GitStatus, Message, MessagePage, Mode, Project, Provider, ProviderId, ProviderModel, Session, TaskLink, ToolActivity, TurnChanges } from './types';
 import type { BrowserPanel } from './browser';
-import { call, chooseFolder, native, onCoreReconnect, onCoreStatus, preview, remote, subscribe } from './bridge';
+import { call, chooseFolder, desktop, localCall, onCoreReconnect, onCoreStatus, preview, remote, remoteCore, setRemoteCore, subscribe } from './bridge';
+import { coreLabel } from './core-mode';
 import { $, button, escape, icon, markdown, morph } from './dom';
 import { bindMessageActions, messageActionsHtml } from './message-actions';
 import { providerLogo } from './provider-logos';
@@ -270,7 +271,7 @@ $app.innerHTML = `<div class="workspace">
     <div class="sidebar-bottom">${button('support', 'Help & support', 'help', 'support-button', 'id="support-button"')}${button('agent-usage', 'Agent usage', 'activity', '', 'id="agent-usage-button"')}<button data-action="archive-view" id="archive-toggle" title="Archived tasks" aria-label="Archived tasks">${icon('archive')}</button><button data-action="settings" title="Settings (${shortcut(',')})" aria-label="Settings">${icon('settings')}</button><button data-action="toggle-theme" id="theme-toggle" aria-label="Dark mode" aria-pressed="false"></button></div>
   </aside>
   <main class="main-pane">
-    <header class="workspace-header" data-tauri-drag-region="deep"><div class="header-leading" data-tauri-drag-region>${button('toggle-sidebar', 'Hide sidebar', 'sidebar', 'sidebar-toggle', 'id="sidebar-toggle" aria-controls="workspace-sidebar" aria-expanded="true" aria-keyshortcuts="Meta+B Control+B"')}<div id="breadcrumb" class="breadcrumb" data-tauri-drag-region></div></div><div class="header-actions">${preview ? '<span class="preview-status">Browser preview · sample data</span>' : ''}<button type="button" id="update-status" class="update-status" hidden>${icon('refresh')}<span>Restart to update</span></button><div class="view-switch" role="group" aria-label="Workspace view"><button data-action="conversation-view" aria-label="Conversation view" aria-pressed="true">${icon('chat')}<span>Conversation</span></button><button data-action="board-view" aria-label="Board view" aria-pressed="false">${icon('board')}<span>Board</span></button><button data-action="github-view" aria-label="GitHub view" aria-pressed="false">${icon('github')}<span>GitHub</span></button></div><button type="button" class="header-run" id="run-project-button" data-action="run-project" aria-label="Run project" title="Run pandacode-run.sh" hidden>${icon('play')}<span>Run</span></button>${button('deploy', 'Deploy', 'upload', '', 'id="deploy-button" aria-haspopup="dialog"')}<span class="header-divider" aria-hidden="true"></span>${button('moodboards', 'Project moodboards', 'images')}${button('browser', 'Open browser', 'globe', '', 'id="browser-toggle"')}${button('terminal', `Toggle terminal (${shortcut('J')})`, 'terminal', '', 'id="terminal-toggle" aria-controls="terminal-drawer" aria-expanded="false"')}<span class="header-divider" aria-hidden="true"></span>${button('toggle-inspector', `Toggle inspector (${shortcut('B', true)})`, 'panel', 'active', 'id="inspector-toggle"')}${button('task-menu', 'Task actions', 'more', '', 'id="task-menu-trigger" aria-haspopup="dialog" aria-expanded="false"')}</div></header>
+    <header class="workspace-header" data-tauri-drag-region="deep"><div class="header-leading" data-tauri-drag-region>${button('toggle-sidebar', 'Hide sidebar', 'sidebar', 'sidebar-toggle', 'id="sidebar-toggle" aria-controls="workspace-sidebar" aria-expanded="true" aria-keyshortcuts="Meta+B Control+B"')}<div id="breadcrumb" class="breadcrumb" data-tauri-drag-region></div></div><div class="header-actions">${preview ? '<span class="preview-status">Browser preview · sample data</span>' : ''}${remote ? `<span class="core-status" id="core-status" data-state="connecting" title="Remote core ${escape(coreLabel(remoteCore!))}: connecting">${icon('server')}<span>${escape(coreLabel(remoteCore!))}</span></span>` : ''}<button type="button" id="update-status" class="update-status" hidden>${icon('refresh')}<span>Restart to update</span></button><div class="view-switch" role="group" aria-label="Workspace view"><button data-action="conversation-view" aria-label="Conversation view" aria-pressed="true">${icon('chat')}<span>Conversation</span></button><button data-action="board-view" aria-label="Board view" aria-pressed="false">${icon('board')}<span>Board</span></button><button data-action="github-view" aria-label="GitHub view" aria-pressed="false">${icon('github')}<span>GitHub</span></button></div><button type="button" class="header-run" id="run-project-button" data-action="run-project" aria-label="Run project" title="Run pandacode-run.sh" hidden>${icon('play')}<span>Run</span></button>${button('deploy', 'Deploy', 'upload', '', 'id="deploy-button" aria-haspopup="dialog"')}<span class="header-divider" aria-hidden="true"></span>${button('moodboards', 'Project moodboards', 'images')}${button('browser', 'Open browser', 'globe', '', 'id="browser-toggle"')}${button('terminal', `Toggle terminal (${shortcut('J')})`, 'terminal', '', 'id="terminal-toggle" aria-controls="terminal-drawer" aria-expanded="false"')}<span class="header-divider" aria-hidden="true"></span>${button('toggle-inspector', `Toggle inspector (${shortcut('B', true)})`, 'panel', 'active', 'id="inspector-toggle"')}${button('task-menu', 'Task actions', 'more', '', 'id="task-menu-trigger" aria-haspopup="dialog" aria-expanded="false"')}</div></header>
     <div class="work-area"><section id="project-board" class="project-board" aria-label="Project board" hidden></section><section id="github-hub" aria-label="GitHub" hidden></section><section class="conversation-pane"><div id="task-details-heading" class="task-details-heading" hidden></div><div id="subagents-host" class="subagents-host" hidden></div><div id="transcript" class="transcript" role="log" aria-label="Conversation" aria-live="off"></div><div id="composer-area" class="composer-area"></div></section></div>
     <div id="terminal-drawer" class="terminal-drawer" hidden><div class="drawer-heading"><span>${icon('terminal')}<span id="terminal-project" class="muted"></span></span><div class="terminal-tabs" role="tablist" aria-label="Terminal tabs"></div><div class="terminal-heading-actions"><button class="icon-button" data-terminal-action="new" aria-label="New terminal" title="New terminal">${icon('plus')}</button><button class="icon-button" data-terminal-action="minimize" aria-label="Minimize terminal" title="Minimize terminal">${icon('minimize')}</button><button class="icon-button" data-terminal-action="close" aria-label="Close terminal" title="Close terminal" aria-haspopup="dialog">${icon('close')}</button></div></div><div id="terminal-host"></div></div>
   </main>
@@ -469,9 +470,13 @@ async function instruction(task: Session, text: string): Promise<void> {
   prompt.value = text; state.drafts.set(task.id, text); await send();
 }
 async function exportTask(task: Session, name?: string): Promise<void> {
-  if (native) {
+  if (desktop) {
     const path = await (await import('@tauri-apps/plugin-dialog')).save({ title: 'Export task', defaultPath: name || `${task.title.replace(/[^a-z0-9 -]/gi, '').slice(0, 80) || 'task'}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
-    if (path) { await call('save_task_export', { sessionId: task.id, path }); notify('Task exported'); }
+    if (!path) return;
+    // On a remote core the task lives on the server; the file is saved on this computer.
+    if (remote) await localCall('save_text_file', { path, contents: await call<string>('export_task', { sessionId: task.id }) });
+    else await call('save_task_export', { sessionId: task.id, path });
+    notify('Task exported');
     return;
   }
   const text = await call<string>('export_task', { sessionId: task.id });
@@ -3551,6 +3556,21 @@ new MutationObserver(() => compactSublines(document.querySelector('#dialog')!)).
 window.addEventListener('focus', renderNavigation);
 document.addEventListener('visibilitychange', () => { renderNavigation(); if (!document.hidden) { renderHeader(); renderStream(); } updateWorkTimer(); });
 if (localStorage.getItem('pandacode.compact') === 'true') document.body.classList.add('compact');
+function showCoreUnreachable(): void {
+  if (document.querySelector('#core-unreachable')) return;
+  const panel = document.createElement('div');
+  panel.id = 'core-unreachable';
+  panel.className = 'core-unreachable';
+  panel.setAttribute('role', 'alertdialog');
+  panel.setAttribute('aria-label', 'Remote core unavailable');
+  panel.innerHTML = `<strong>Can’t reach the PandaCode core at ${escape(coreLabel(remoteCore!))}</strong><p>It keeps trying. Check that pandacode-core is running and that this computer can reach it.</p><div class="core-unreachable-actions"><button type="button" class="primary-button" data-core="retry">Retry now</button>${desktop ? '<button type="button" class="secondary-button" data-core="local">Use this computer</button>' : ''}</div>`;
+  panel.addEventListener('click', event => {
+    const action = (event.target as HTMLElement).closest<HTMLElement>('[data-core]')?.dataset.core;
+    if (action === 'retry') location.reload();
+    else if (action === 'local') setRemoteCore(null);
+  });
+  document.body.append(panel);
+}
 async function boot(): Promise<void> {
   await subscribe('agent-event', onAgent);
   await subscribe('provider-models-changed', event => invalidateModels(event.provider));
@@ -3560,9 +3580,14 @@ async function boot(): Promise<void> {
   await subscribe('sessions-changed', () => run(reloadSessions()));
   // Remote mode: the core keeps working while the socket is down; reload what changed meanwhile.
   if (remote) {
-    let lost = false;
+    let lost = false, connected = false;
+    const chip = document.querySelector<HTMLElement>('#core-status');
+    // A core that never answers would leave an empty window; offer a way out instead.
+    const unreachable = window.setTimeout(() => { if (!connected) showCoreUnreachable(); }, 6000);
     run(onCoreStatus(status => {
-      if (status === 'closed' && !lost) { lost = true; notify('Lost the connection to the PandaCode core. Reconnecting…'); }
+      if (chip) { chip.dataset.state = status; chip.title = `Remote core ${coreLabel(remoteCore!)}: ${status === 'open' ? 'connected' : status === 'connecting' ? 'connecting' : 'reconnecting'}`; }
+      if (status === 'open') { connected = true; clearTimeout(unreachable); document.querySelector('#core-unreachable')?.remove(); }
+      if (status === 'closed' && connected && !lost) { lost = true; notify('Lost the connection to the PandaCode core. Reconnecting…'); }
       else if (status === 'open' && lost) { lost = false; notify('Reconnected to the PandaCode core'); }
     }).then(() => undefined));
     run(onCoreReconnect(() => run((async () => {
@@ -3643,4 +3668,4 @@ const agentUpdates = initializeAgentUpdates({
 });
 window.addEventListener('pagehide', () => agentUpdates.dispose(), { once: true });
 renderThemeToggle(); render(); renderInspector(); run(boot());
-if (native) initializeNativeAppearance();
+if (desktop) initializeNativeAppearance();
