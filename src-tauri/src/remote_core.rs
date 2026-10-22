@@ -85,7 +85,7 @@ impl Origins {
     fn allows(&self, origin: Option<&str>) -> bool {
         let Some(origin) = origin else { return true };
         let origin = origin.trim_end_matches('/').to_ascii_lowercase();
-        if self.0.iter().any(|allowed| *allowed == origin) {
+        if self.0.contains(&origin) {
             return true;
         }
         let Ok(url) = tauri::Url::parse(&origin) else { return false };
@@ -218,6 +218,8 @@ async fn client(
     origins: Origins,
 ) -> Result<(), String> {
     use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+    // tungstenite's handshake callback fixes this signature, large error type included.
+    #[allow(clippy::result_large_err)]
     let check = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
         let origin = request.headers().get("origin").map(|value| value.to_str().unwrap_or("invalid"));
         if origins.allows(origin) {

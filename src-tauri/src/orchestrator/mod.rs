@@ -2,6 +2,7 @@
 //! (docs/superpowers/specs/2026-10-22-hermes-orchestrator-design.md):
 //! - `mcp`: an HTTP MCP endpoint whose tools (`tools`) find, create, message and read tasks.
 //! - `hooks`: signed webhooks that wake the orchestrator when a task it supervises needs it.
+//!
 //! A task's `supervisor` says whether the user or the orchestrator answers its approvals.
 
 pub mod hooks;

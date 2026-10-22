@@ -56,3 +56,8 @@ jobs:
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
       - if: ${{ !cancelled() }}
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      # The headless core (pandacode-core, docs/remote-core.md) builds without the webview runtime.
+      - if: ${{ !cancelled() }}
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --no-default-features --features headless
+      - if: ${{ !cancelled() }}
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --no-default-features --features headless -- -D warnings

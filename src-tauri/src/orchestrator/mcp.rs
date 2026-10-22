@@ -310,7 +310,7 @@ async fn process(dispatcher: &dyn Dispatcher, body: &[u8]) -> (Option<Value>, bo
             for item in items {
                 responses.extend(handle(dispatcher, item, &mut initialized).await);
             }
-            (!responses.is_empty()).then(|| Value::Array(responses))
+            (!responses.is_empty()).then_some(Value::Array(responses))
         }
         item => handle(dispatcher, item, &mut initialized).await,
     };
@@ -600,7 +600,7 @@ mod tests {
         let reply = send(&server, b"POST /mcp HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer secret\r\n\r\n".to_vec()).await;
         assert_eq!(reply.status, 411);
         let mut huge_header = b"POST /mcp HTTP/1.1\r\nHost: x\r\nX-Pad: ".to_vec();
-        huge_header.extend(std::iter::repeat(b'a').take(20 * 1024));
+        huge_header.extend(std::iter::repeat_n(b'a', 20 * 1024));
         huge_header.extend_from_slice(b"\r\n\r\n");
         assert_eq!(send(&server, huge_header).await.status, 431);
         server.handle.stop();

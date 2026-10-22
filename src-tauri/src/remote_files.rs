@@ -35,7 +35,7 @@ pub fn fs_home() -> crate::Result<String> {
 #[tauri::command]
 pub async fn fs_list(path: Option<String>, show_hidden: Option<bool>) -> crate::Result<Listing> {
     let path = match path.filter(|p| !p.trim().is_empty()) {
-        Some(path) => PathBuf::from(expand_home(path.trim())),
+        Some(path) => expand_home(path.trim()),
         None => home().ok_or("This machine has no home folder.")?,
     };
     tauri::async_runtime::spawn_blocking(move || list(&path, show_hidden.unwrap_or(false)))

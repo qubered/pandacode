@@ -905,9 +905,9 @@ mod tests {
         let mut expected = vec![mine.id.clone(), users.id.clone()];
         expected.sort();
         assert_eq!(all, expected);
-        assert_eq!(ids(json!({"supervisor": "hermes"}), &[]), [mine.id.clone()]);
-        assert_eq!(ids(json!({"supervisor": "user"}), &[]), [users.id.clone()]);
-        assert_eq!(ids(json!({"status": "running"}), &[]), [users.id.clone()]);
+        assert_eq!(ids(json!({"supervisor": "hermes"}), &[]), std::slice::from_ref(&mine.id));
+        assert_eq!(ids(json!({"supervisor": "user"}), &[]), std::slice::from_ref(&users.id));
+        assert_eq!(ids(json!({"status": "running"}), &[]), std::slice::from_ref(&users.id));
         assert_eq!(ids(json!({"projectId": "elsewhere"}), &[]), Vec::<String>::new());
         assert_eq!(ids(json!({"limit": 1}), &[]).len(), 1);
         // A running status with no live agent reads as interrupted.
