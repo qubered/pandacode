@@ -566,12 +566,9 @@ pub(super) async fn export_task(state: State<'_, AppState>, session_id: String) 
     Ok(output)
 }
 
-#[tauri::command]
-pub(super) async fn save_task_export(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-) -> Result<()> {
+/// Where a task export may be written: an absolute Markdown or text file that is not a
+/// symlink or anything but a regular file.
+pub(crate) fn export_path(path: String) -> Result<PathBuf> {
     let path = PathBuf::from(path);
     if !path.is_absolute()
         || !matches!(
@@ -584,6 +581,16 @@ pub(super) async fn save_task_export(
     if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file() || m.file_type().is_symlink()) {
         return Err("Choose a regular file for the export.".into());
     }
+    Ok(path)
+}
+
+#[tauri::command]
+pub(super) async fn save_task_export(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<()> {
+    let path = export_path(path)?;
     let text = export_task(state, session_id).await?;
     blocking(move || std::fs::write(path, text).map_err(|e| e.to_string())).await
 }

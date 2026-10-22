@@ -888,3 +888,17 @@ html[data-theme="dark"] body .dialog-plate{box-shadow:0 40px 100px -30px rgb(0 0
 /* PandaCode is instant: no transitions anywhere. Looping status indicators (spinners,
    working pulses) are animations, not transitions, so they keep running. */
 *,*::before,*::after{transition:none!important}
+/* Remote core (docs/remote-core.md): which server this window works on, and a way out when it is unreachable. */
+.core-status{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;color:var(--muted);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.core-status .icon{width:13px;height:13px;flex-shrink:0}
+.core-status::before{content:"";width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--muted)}
+.core-status[data-state="open"]::before{background:var(--accent)}
+.core-status[data-state="closed"]::before{background:var(--danger,#c0392b)}
+@media (max-width:900px){.core-status span{display:none}}
+.core-unreachable{position:fixed;left:50%;top:84px;translate:-50% 0;z-index:95;width:min(440px,calc(100vw - 32px));padding:16px 18px;border:.5px solid var(--glass-edge);border-radius:var(--sheet-radius,6px);color:var(--text);
+  background:linear-gradient(180deg,var(--glass-warm),var(--glass-tint) 46%),var(--bg);box-shadow:0 0 0 .5px var(--glass-ring),0 24px 60px -24px var(--glass-shadow-deep),inset 0 1px 0 var(--glass-highlight)}
+.core-unreachable p{margin:6px 0 12px;color:var(--muted);font-size:.84rem}
+.core-unreachable-actions{display:flex;gap:8px;justify-content:flex-end}
+.remote-core-connect{display:flex;gap:6px;align-items:center}
+.remote-core-connect input{width:220px;font-family:var(--mono,ui-monospace,monospace);font-size:.8rem}
+.remote-core-error{margin:6px 0 0;color:var(--danger,#c0392b)}

@@ -44,6 +44,24 @@ WebSockets, and the browser sits inside the tailnet.
 For a local trial on one machine, use `npm run core -- --port 7878` and
 `?core=ws://127.0.0.1:7878`.
 
+**From the desktop app instead of a browser:**
+1. Open Settings → General → Remote core.
+2. Enter `ws://<X-tailnet-ip>:7878` and click **Connect**. The address is checked
+   first, then remembered across launches.
+3. A chip in the header shows the server and whether it's connected.
+
+What happens in this mode:
+- Tasks, projects, terminals and agents run on X.
+- The window's appearance, zoom, app updates and links stay on your computer.
+- Task exports are saved on your computer.
+- Dropped files aren't sent to the server. Paste images, or attach files from the
+  server instead.
+- **Use this computer**, in Settings or on the "can't reach" panel, switches back
+  to the app's own core.
+
+The core accepts the desktop app's origins (`tauri://localhost`,
+`http(s)://tauri.localhost`) without `--allow-origin`.
+
 ## Verification (2026-10-22)
 
 **Automated tests:**

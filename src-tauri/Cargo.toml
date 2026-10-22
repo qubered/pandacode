@@ -4,6 +4,8 @@ version = "0.3.16"
 description = "A lightweight native workspace for coding agents"
 authors = ["PandaCode contributors"]
 edition = "2021"
+# `cargo run` (and `tauri dev`) starts the desktop app; the headless core is `--bin pandacode-core`.
+default-run = "pandacode"
 
 [lib]
 name = "pandacode_lib"

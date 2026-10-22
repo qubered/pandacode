@@ -1,5 +1,8 @@
 import './attachments.css';
-import { call, chooseAttachmentFolder, chooseAttachments, native } from './bridge';
+import { call, chooseAttachmentFolder, chooseAttachments, desktop, remote } from './bridge';
+
+/** Shown when files are dropped on the desktop app while it works on a remote core. */
+export const REMOTE_DROP = 'Dropped files stay on this computer. Paste images, or attach files from the server with +.';
 import { escape, icon } from './dom';
 
 /** Inputs the user adds to one message: images travel as native image blocks,
@@ -212,7 +215,7 @@ export function mountPromptAttachments(host: AttachmentsHost) {
       // Open dialogs (moodboards, settings) own their drops.
       const accepting = () => Boolean(host.taskId()) && !document.querySelector('dialog[open]');
       const setActive = (active: boolean) => zone()?.classList.toggle('drop-active', active && accepting());
-      if (!native) {
+      if (!desktop) {
         let depth = 0;
         document.addEventListener('dragenter', event => { if (event.dataTransfer?.types.includes('Files')) { depth++; setActive(true); } });
         document.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; setActive(false); } });
@@ -229,7 +232,11 @@ export function mountPromptAttachments(host: AttachmentsHost) {
       import('@tauri-apps/api/webview').then(({ getCurrentWebview }) => getCurrentWebview().onDragDropEvent(event => {
         if (event.payload.type === 'enter' || event.payload.type === 'over') setActive(true);
         else if (event.payload.type === 'leave') setActive(false);
-        else if (event.payload.type === 'drop') { setActive(false); if (accepting()) attachPaths(event.payload.paths).catch(host.report); }
+        else if (event.payload.type === 'drop') {
+          setActive(false);
+          // Dropped paths are on this machine; a remote core cannot read them.
+          if (accepting()) (remote ? Promise.reject(new Error(REMOTE_DROP)) : attachPaths(event.payload.paths)).catch(host.report);
+        }
       })).catch(() => { /* Drag and drop is unavailable in this webview. */ });
     },
   };

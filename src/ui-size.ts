@@ -1,5 +1,5 @@
 import './ui-size.css';
-import { native } from './bridge';
+import { desktop } from './bridge';
 import { commandKey } from './platform';
 
 /* Interface size. In the app it zooms the whole webview, like Safari's ⌘+, so icons, spacing and
@@ -15,10 +15,10 @@ try {
 apply();
 
 function apply(): void {
-  document.documentElement.style.setProperty('--ui-scale', String(native ? 1 : scale));
+  document.documentElement.style.setProperty('--ui-scale', String(desktop ? 1 : scale));
   // The title-bar row keeps its on-screen height so it stays level with the native window buttons.
   document.documentElement.style.setProperty('--page-zoom', String(pageZoom()));
-  if (!native) return;
+  if (!desktop) return;
   void import('@tauri-apps/api/webview')
     .then(({ getCurrentWebview }) => getCurrentWebview().setZoom(scale))
     .catch(cause => console.error('Setting the interface size failed', cause));
@@ -26,9 +26,9 @@ function apply(): void {
 
 export function uiScale(): number { return scale; }
 /** CSS pixels → window points: native views placed over the page multiply by this. */
-export function pageZoom(): number { return native ? scale : 1; }
+export function pageZoom(): number { return desktop ? scale : 1; }
 /** How much the root font is scaled on top of the page zoom (only in a browser: preview or remote mode). */
-export function textScale(): number { return native ? 1 : scale; }
+export function textScale(): number { return desktop ? 1 : scale; }
 
 export function setUiScale(value: number): void {
   if (!Number.isFinite(value)) return;

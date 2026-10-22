@@ -1,4 +1,4 @@
-import { call, preview, remote } from './bridge';
+import { call, desktop, preview, remote } from './bridge';
 import { icon } from './dom';
 import { appUpdates, describeUpdate } from './app-updates';
 
@@ -28,8 +28,10 @@ export function aboutSettingsHtml(): string {
 /** Reads the bundle version from Tauri; the browser preview has no app bundle. */
 async function appVersion(): Promise<string> {
   if (preview) return 'Preview';
-  if (remote) return `${(await call<{ version: string }>('core_info')).version} · remote core`;
-  return (await import('@tauri-apps/api/app')).getVersion();
+  const core = remote ? (await call<{ version: string }>('core_info')).version : '';
+  if (!desktop) return `${core} · remote core`;
+  const app = await (await import('@tauri-apps/api/app')).getVersion();
+  return remote ? `${app} · remote core ${core}` : app;
 }
 
 export function mountAboutSettings(host: HTMLElement): () => void {
