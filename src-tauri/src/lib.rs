@@ -2916,15 +2916,16 @@ fn core_info() -> CoreInfo {
     }
 }
 
-/// Desktop app on a remote core: saves text the core produced (such as a task export) to a
-/// file on this computer, at a path the user chose in the Save dialog.
+/// Desktop app on a remote core: saves a task export the core produced to this computer,
+/// with the same path rules as `save_task_export`.
 #[cfg(feature = "desktop")]
 #[tauri::command]
-async fn save_text_file(path: String, contents: String) -> Result<()> {
+async fn save_remote_export(path: String, contents: String) -> Result<()> {
     if contents.len() > 64 * 1024 * 1024 {
-        return Err("The file is too large to save.".into());
+        return Err("The export is too large to save.".into());
     }
-    blocking(move || std::fs::write(&path, contents).map_err(|e| format!("Could not save {path}: {e}"))).await
+    let path = task_controls::export_path(path)?;
+    blocking(move || std::fs::write(path, contents).map_err(|e| e.to_string())).await
 }
 #[tauri::command]
 async fn list_local_servers() -> Result<Vec<local_servers::LocalServer>> {
@@ -3267,7 +3268,7 @@ pub(crate) fn invoke_handler(invoke: tauri::ipc::Invoke<Rt>) -> bool {
         list_local_servers,
         core_info,
         #[cfg(feature = "desktop")]
-        save_text_file,
+        save_remote_export,
         remote_files::fs_home,
         remote_files::fs_list,
         orchestrator::orchestrator_settings,

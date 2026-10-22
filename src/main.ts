@@ -474,7 +474,7 @@ async function exportTask(task: Session, name?: string): Promise<void> {
     const path = await (await import('@tauri-apps/plugin-dialog')).save({ title: 'Export task', defaultPath: name || `${task.title.replace(/[^a-z0-9 -]/gi, '').slice(0, 80) || 'task'}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
     if (!path) return;
     // On a remote core the task lives on the server; the file is saved on this computer.
-    if (remote) await localCall('save_text_file', { path, contents: await call<string>('export_task', { sessionId: task.id }) });
+    if (remote) await localCall('save_remote_export', { path, contents: await call<string>('export_task', { sessionId: task.id }) });
     else await call('save_task_export', { sessionId: task.id, path });
     notify('Task exported');
     return;
