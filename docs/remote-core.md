@@ -1,7 +1,9 @@
 # Remote core: headless backend, remote frontend
 
 Status: **Phases 1–4 are done** (option B), verified end to end on an Ubuntu
-26.04 x86_64 server over Tailscale (see "Verification").
+26.04 x86_64 server over Tailscale (see "Verification"). The desktop app can also
+connect to a remote core (Settings → General → Remote core). Sections 1–7 below are the
+original Phase 0 analysis, kept for reference.
 Remote mode is a third run mode, beside native (Tauri) and preview (browser fixtures).
 
 ## Running it
@@ -360,15 +362,23 @@ mocks and tests can cover them.
   build the current lockfile (crates need edition 2024). Use `cargo +1.98.1` or
   `rustup update stable`.
 
-## 8. Open questions
+## 8. Decisions (resolved 2026-10-22)
 
-1. Option **B** (mock runtime, needs GTK 3 libs on X) or Option **A** (hand-rolled
-   `AppCtx`, no Tauri in headless, much larger diff)?
-2. Add the terminal scrollback buffer and `terminal_snapshot` (small change)?
-3. File-backed secret store under `headless`?
-4. Accept the (c) dispositions in §3: cloud and Jev stubbed for now, bots ported?
-5. Phase 4 needs a Linux host. Do you want me to verify against X directly (give
-   me its tailnet name/SSH), or in a local Linux container first?
+1. **Option B** (Tauri's mock runtime) was built. Building it needs the GTK and WebKitGTK
+   headers, which stay in a Docker build stage. A server running the core needs only
+   `libgtk-3-0`.
+2. **Terminals** keep 256 KB of scrollback, readable with `terminal_snapshot`. A reconnecting
+   page adopts live shells through `list_terminals`.
+3. **Headless secrets** go in an owner-only `secrets.json` in the data folder.
+4. **The (c) commands in §3** follow the dispositions there: cloud and Jev are refused in
+   headless, and bots are ported.
+5. **Phase 4** was verified first in a Linux container, then on a real Ubuntu server over
+   Tailscale (see "Verification").
+
+Later additions:
+- the Hermes orchestrator ([hermes.md](hermes.md));
+- desktop remote mode ("From the desktop app" above);
+- the macOS App Transport Security fix (`src-tauri/Info.plist`).
 
 ## Appendix: every registered command
 
