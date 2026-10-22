@@ -246,7 +246,7 @@ fn queued_prompt(attachments: &Value) -> (String, Vec<String>) {
 
 /// Answers an approval natively and clears its card in the desktop app.
 async fn answer(app: &crate::AppHandle, session_id: &str, request_id: &str, approved: bool) -> Result<()> {
-    crate::respond_approval(app.state::<AppState>(), session_id.to_owned(), request_id.to_owned(), approved).await?;
+    crate::respond_approval(app.clone(), app.state::<AppState>(), session_id.to_owned(), request_id.to_owned(), approved).await?;
     let event = crate::providers::AgentEvent { session_id: session_id.into(), kind: "approval_cancelled".into(), text: String::new(), request_id: Some(request_id.into()), data: None, tool: None };
     let _ = app.emit("agent-event", event);
     Ok(())
