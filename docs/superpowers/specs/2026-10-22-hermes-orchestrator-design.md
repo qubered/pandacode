@@ -58,7 +58,9 @@ IPC to the core itself. So everything Hermes does reaches the UI through the exi
   the token (generating it if needed) and exits.
 - **Mode values** are the session `mode` strings: `plan` < `ask` < `auto` < `full`.
   The ceiling is `maxMode`, default `auto` (Accept edits). A mode above the ceiling is
-  clamped down to it.
+  clamped down to it. In `auto`, the agent CLI still decides which shell commands are safe
+  to run unasked. Claude Code ran `sleep … && date > file` without a prompt in testing.
+  `ask` prompts for every command.
 
 ## Data model (schema 26)
 

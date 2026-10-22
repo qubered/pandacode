@@ -19,7 +19,9 @@ You keep using PandaCode as usual on the same tasks. Design:
 - **Take over:** in the task header, this makes a task yours again. *Let Hermes
   supervise* hands one of your tasks to Hermes.
 - **Highest mode:** Hermes cannot start tasks above this setting. The default is Accept
-  edits, so shell commands still ask for approval.
+  edits: file edits, and shell commands the agent CLI considers safe, run without asking,
+  while other commands still ask. Hermes can always choose **Ask** mode for a task, so
+  every command needs an answer.
 - **Queued messages:** on supervised tasks, PandaCode delivers them itself. They go out
   even when no PandaCode window is open.
 
