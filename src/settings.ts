@@ -11,6 +11,7 @@ import { mountResourceUsage, resourceUsageHtml } from './resource-usage-settings
 import { colorsSummary } from './theme-settings';
 import { mountAgentTeams, type AgentTeamsOptions } from './agent-teams';
 import { mountCloudSettings, type CloudSettingsHost } from './cloud-settings';
+import { mountOrchestratorSettings, type OrchestratorHost } from './orchestrator-settings';
 
 /** Panels that live elsewhere and are embedded here: each mounts into a host and returns its cleanup. */
 type Embed = (host: HTMLElement) => Promise<() => void>;
@@ -32,6 +33,8 @@ interface SettingsOptions {
   teams?: Omit<AgentTeamsOptions, 'providers'>;
   /** Cloud sandbox connections (Daytona, Cloudflare, AWS). */
   cloud?: CloudSettingsHost;
+  /** The orchestrator (Hermes) endpoint and webhook, under Agents. */
+  orchestrator?: OrchestratorHost;
   embed: { colors: Embed; wallpapers: Embed; providerConnections: Embed; openCodeModels: Embed };
   /** Leaves Settings for the workspace. */
   close(): void;
@@ -73,7 +76,8 @@ function sectionHtml(id: SettingsSection, options: SettingsOptions): string {
       <div class="settings-provider-status" role="status" hidden></div>
       <div class="provider-diagnostics settings-group"></div>
       ${options.preview ? '<p class="settings-preview-note">Browser preview · sample agent availability.</p>' : ''}
-      <h3 class="settings-heading">OpenCode models</h3><div class="settings-embed" data-embed="openCodeModels"></div>`;
+      <h3 class="settings-heading">OpenCode models</h3><div class="settings-embed" data-embed="openCodeModels"></div>
+      <h3 class="settings-heading">Orchestrator</h3><div id="orchestrator-settings"></div>`;
     case 'providers': return '<div class="settings-embed" data-embed="providerConnections"></div>';
     case 'teams': return '<div id="agent-teams-settings"></div>';
     case 'tools': return `<div class="settings-group">
@@ -162,6 +166,7 @@ export function mountSettings(host: HTMLElement, options: SettingsOptions): Sett
       cleanups.push(mountAboutSettings(panel.querySelector<HTMLElement>('.settings-about')!));
       cleanups.push(mountResourceUsage(panel.querySelector<HTMLElement>('.settings-resources')!));
     }
+    if (id === 'agents' && options.orchestrator) cleanups.push(mountOrchestratorSettings(panel.querySelector<HTMLElement>('#orchestrator-settings')!, options.orchestrator));
     if (id === 'agents' && !discovered) void refresh();
     for (const slot of panel.querySelectorAll<HTMLElement>('[data-embed]')) {
       const embed = options.embed[slot.dataset.embed as keyof SettingsOptions['embed']];

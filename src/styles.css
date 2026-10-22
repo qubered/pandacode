@@ -95,6 +95,12 @@ button .icon{pointer-events:none}
 .breadcrumb>.icon{width:14px;height:14px}
 .breadcrumb>button{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--text);font-size:.8rem;white-space:nowrap;font-weight:500}
 .breadcrumb>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;color:var(--muted)}
+/* Who supervises the open task, and the way to take it back. */
+.breadcrumb>.supervisor-crumb{display:flex;align-items:center;gap:8px;flex:none;min-width:0}
+.supervisor-crumb .supervisor-label{padding:0 7px;border-radius:3px;background:rgb(var(--accent-rgb) / .16);color:var(--accent-ink);font-size:.72rem;font-weight:600;line-height:20px;white-space:nowrap}
+html[data-theme=dark] .supervisor-crumb .supervisor-label{color:var(--accent)}
+.supervisor-crumb .secondary-button{height:24px;padding:0 9px;font-size:.74rem;--press:1}
+@media(max-width:650px){.supervisor-crumb .supervisor-label{display:none}}
 .header-actions{display:flex;flex-shrink:0;gap:5px}
 .header-actions .icon-button{width:28px;height:28px}
 .header-actions .icon{width:16px;height:16px}

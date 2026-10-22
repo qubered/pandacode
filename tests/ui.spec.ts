@@ -200,7 +200,7 @@ test('identifies sample data and renders the desktop workspace without runtime e
 
 test('does not offer earlier messages for a complete short conversation with global message IDs', async ({ page }) => {
   await chooseProjectFilter(page, 'pandacode');
-  await expect(page.locator('#transcript .message-content')).toHaveText('The project is a small native workspace for coding agents.');
+  await expect(page.locator('#transcript .agent-message .message-content')).toHaveText('The project is a small native workspace for coding agents.');
   await expect(page.getByRole('button', { name: 'Load earlier messages', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Return to latest messages', exact: true })).toHaveCount(0);
 });
