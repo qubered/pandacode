@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the macOS app's Info.plist by Tauri. -->
+<plist version="1.0">
+<dict>
+  <!-- Remote core (docs/remote-core.md): App Transport Security otherwise blocks the web
+       view's ws:// connection to a core on a Tailscale address, which macOS does not count
+       as local and ATS cannot exempt by IP. This covers web content only; the app CSP
+       still limits it to its own pages plus ws:/wss: connections. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoadsInWebContent</key>
+    <true/>
+  </dict>
+</dict>
+</plist>
