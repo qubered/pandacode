@@ -180,21 +180,50 @@ pub fn orchestrator_reveal_token() -> Result<String> {
     token(true).ok_or_else(|| "Could not create the orchestrator token.".into())
 }
 
-/// The user hands a task to the orchestrator (`supervisor` = its name) or takes it over (`null`).
+/// Who an orchestrator action runs as: the supervisor name and the epoch it was authorised at.
+/// Final run admission and the run's input sends re-check it under the store lock, so a takeover
+/// (or take-over-and-re-handover, which has a new epoch) between the tool's check and the
+/// actual send always wins.
+#[derive(Clone, Debug)]
+pub struct Authority {
+    pub name: String,
+    pub epoch: i64,
+    pub max_mode: String,
+}
+
+impl Authority {
+    pub fn check(&self, task: &crate::storage::Session) -> std::result::Result<(), String> {
+        tools::authorize(task, &self.name, true, Some(self.epoch), &self.max_mode)
+    }
+}
+
+/// The user hands a task to the orchestrator (`supervisor` = its name) at `level` ("watch" or
+/// "manage", the default), changes that level, or takes the task over (`null`). Every change
+/// bumps the task's supervision epoch and drops the messages the orchestrator queued; the
+/// running agent is left alone. `grant_mode` (the task's current mode, at level manage) lets the
+/// orchestrator manage this one task above its highest mode; it is the only way to set a grant,
+/// and any later change of supervisor, level or the task's mode voids it.
 #[tauri::command]
-pub async fn set_task_supervisor(app: AppHandle, state: State<'_, AppState>, session_id: String, supervisor: Option<String>) -> Result<crate::storage::Session> {
+pub async fn set_task_supervisor(app: AppHandle, state: State<'_, AppState>, session_id: String, supervisor: Option<String>, level: Option<String>, grant_mode: Option<String>) -> Result<crate::storage::Session> {
     let name = settings(&app).name;
     if supervisor.as_deref().is_some_and(|s| s != name) {
         return Err(format!("Only {name} can supervise tasks."));
     }
-    let store = state.store.clone();
-    let before = store.lock().map_err(|e| e.to_string())?.session(&session_id)?;
-    let session = store.lock().map_err(|e| e.to_string())?.set_supervisor(&session_id, supervisor.as_deref())?;
+    let (before, session) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let before = store.session(&session_id)?;
+        let session = store.set_supervision_granted(&session_id, supervisor.as_deref(), Some(level.as_deref().unwrap_or("manage")), grant_mode.as_deref().filter(|mode| !mode.is_empty()))?;
+        (before, session)
+    };
     let _ = app.emit("sessions-changed", ());
-    match (before.supervisor.as_deref(), supervisor.as_deref()) {
-        (Some(_), None) => hooks::notify_with(&app, &before, hooks::Event::TakenOver),
-        (None, Some(_)) => hooks::notify(&app, &session_id, hooks::Event::HandedOver { last_reply: String::new() }),
-        _ => {}
+    let _ = app.emit("queue-changed", serde_json::json!({"sessionId": session_id}));
+    if session.supervision_epoch != before.supervision_epoch {
+        match (before.supervisor.as_deref(), session.supervisor.as_deref()) {
+            (Some(_), None) => hooks::notify_with(&app, &before, hooks::Event::TakenOver),
+            // A new hand-over, or a new level: the orchestrator learns its level and epoch.
+            (_, Some(_)) => hooks::notify(&app, &session_id, hooks::Event::HandedOver { last_reply: String::new() }),
+            _ => {}
+        }
     }
     Ok(session)
 }

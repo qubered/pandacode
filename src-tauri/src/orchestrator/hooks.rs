@@ -25,9 +25,21 @@ pub enum Event {
     TakenOver,
     /// An empty `last_reply` is read from the task's latest assistant message.
     HandedOver { last_reply: String },
-    /// Sent by the orchestrator's `release_task` tool.
-    Released,
+    /// Sent by the orchestrator's `release_task` tool, with its handover note if it left one.
+    Released { handover: Option<Value> },
 }
+
+/// The delegation an event belongs to. Before each attempt the task must still be supervised
+/// by `supervisor` at `epoch`, or the event is dropped: a takeover or level change makes it stale.
+#[derive(Clone, Debug, PartialEq)]
+struct Guard {
+    session_id: String,
+    supervisor: String,
+    epoch: i64,
+}
+
+/// A task's current (supervisor, epoch), read at delivery.
+type Current = Arc<dyn Fn(&str) -> Option<(Option<String>, i64)> + Send + Sync>;
 
 /// Text fields in `data` are cut to this many bytes, on a character boundary.
 const TEXT_CAP: usize = 2048;
@@ -46,7 +58,7 @@ const RETRY_DELAYS: [Duration; 5] = [
 static OUTBOX: OnceLock<Arc<Outbox>> = OnceLock::new();
 
 /// Starts the delivery worker. Called once from `orchestrator::setup`.
-pub fn start(_app: &AppHandle) {
+pub fn start(app: &AppHandle) {
     if OUTBOX.get().is_some() {
         return;
     }
@@ -61,9 +73,15 @@ pub fn start(_app: &AppHandle) {
     if OUTBOX.set(outbox.clone()).is_err() {
         return;
     }
+    let app = app.clone();
     let engine = Engine {
         client,
         secret: Arc::new(|| super::webhook_secret().filter(|secret| !secret.is_empty())),
+        current: Arc::new(move |session_id| {
+            let state = app.try_state::<crate::AppState>()?;
+            let task = state.store.lock().ok()?.session(session_id).ok()?;
+            Some((task.supervisor, task.supervision_epoch))
+        }),
         delays: RETRY_DELAYS.to_vec(),
     };
     tauri::async_runtime::spawn(outbox.run(engine));
@@ -111,12 +129,26 @@ fn question_text(data: &Value) -> String {
     }
 }
 
-fn enqueue(app: &AppHandle, outbox: &Outbox, task: &crate::storage::Session, event: Event) {
-    // A released task has no supervisor any more, but the orchestrator still hears about it.
-    if task.supervisor.is_none() && !matches!(event, Event::Released) {
-        return;
+/// Whether `event` on `task` (as it stands, or its snapshot before a takeover or release) goes to
+/// orchestrator `name`, and the guard it is delivered under. Only the supervisor hears about a
+/// task; at level watch only finished runs and open requests, plus hand-overs and their end.
+/// The end of a supervision (taken over, released) is announced without a guard.
+fn admit(task: &crate::storage::Session, name: &str, event: &Event) -> Option<Option<Guard>> {
+    if task.supervisor.as_deref() != Some(name) {
+        return None;
     }
-    let url = match super::settings(app).webhook {
+    let ending = matches!(event, Event::TakenOver | Event::Released { .. });
+    let watched = matches!(event, Event::Finished { .. } | Event::NeedsResponse { .. } | Event::HandedOver { .. });
+    if task.supervision_level.as_deref() != Some("manage") && !ending && !watched {
+        return None;
+    }
+    Some((!ending).then(|| Guard { session_id: task.id.clone(), supervisor: name.to_owned(), epoch: task.supervision_epoch }))
+}
+
+fn enqueue(app: &AppHandle, outbox: &Outbox, task: &crate::storage::Session, event: Event) {
+    let settings = super::settings(app);
+    let Some(guard) = admit(task, &settings.name, &event) else { return };
+    let url = match settings.webhook {
         Some(webhook) if !webhook.url.trim().is_empty() => webhook.url,
         _ => return,
     };
@@ -154,7 +186,7 @@ fn enqueue(app: &AppHandle, outbox: &Outbox, task: &crate::storage::Session, eve
         }
     }
     let (id, body) = build_body(&task_info(task, project_name), &event);
-    outbox.push(Job { id, event_type: event_type(&event), url, body, attempt: 0, due: Instant::now() });
+    outbox.push(Job { id, event_type: event_type(&event), url, body, attempt: 0, due: Instant::now(), guard });
 }
 
 /// The latest assistant text of the task (of its latest turn only when `current_turn`), cut to the cap.
@@ -202,6 +234,8 @@ struct TaskInfo {
     supervisor: Option<String>,
     provider: String,
     model: String,
+    level: Option<String>,
+    epoch: i64,
 }
 
 fn task_info(task: &crate::storage::Session, project_name: String) -> TaskInfo {
@@ -214,6 +248,8 @@ fn task_info(task: &crate::storage::Session, project_name: String) -> TaskInfo {
         supervisor: task.supervisor.clone(),
         provider: task.provider.clone(),
         model: task.model.clone(),
+        level: task.supervision_level.clone(),
+        epoch: task.supervision_epoch,
     }
 }
 
@@ -225,7 +261,7 @@ fn event_type(event: &Event) -> &'static str {
         Event::HumanResponded { .. } => "task.human_responded",
         Event::TakenOver => "task.taken_over",
         Event::HandedOver { .. } => "task.handed_over",
-        Event::Released => "task.released",
+        Event::Released { .. } => "task.released",
     }
 }
 
@@ -304,7 +340,10 @@ fn data_and_summary(task: &TaskInfo, event: &Event) -> (Value, String) {
             let data = json!({"lastReply": cap_text(last_reply, TEXT_CAP)});
             (data, format!("The user handed {} to you.", lower))
         }
-        Event::Released => (json!({}), format!("{what} was released.")),
+        Event::Released { handover } => {
+            let data = handover.as_ref().map_or_else(|| json!({}), |note| json!({"handover": note}));
+            (data, format!("{what} was released."))
+        }
     }
 }
 
@@ -331,6 +370,7 @@ fn payload(id: &str, occurred_at: i64, task: &TaskInfo, event: &Event) -> Value 
             "provider": task.provider,
             "model": task.model,
         },
+        "supervision": {"level": task.level, "epoch": task.epoch},
         "summary": summary,
         "data": data,
     })
@@ -369,6 +409,8 @@ struct Job {
     attempt: usize,
     /// Not sent before this time.
     due: Instant,
+    /// None for events that announce the end of a supervision.
+    guard: Option<Guard>,
 }
 
 /// In-memory FIFO of events waiting to be sent, or to be retried.
@@ -446,17 +488,25 @@ struct Engine {
     client: reqwest::Client,
     /// The webhook secret, read for every attempt so a changed secret applies at once.
     secret: Arc<dyn Fn() -> Option<String> + Send + Sync>,
+    current: Current,
     delays: Vec<Duration>,
 }
 
 impl Engine {
     /// Sends `job` once. Returns it, due later, when it should be retried.
     async fn deliver(&self, mut job: Job) -> Option<Job> {
-        let secret = self.secret.clone();
-        let Some(secret) = tokio::task::spawn_blocking(move || secret()).await.ok().flatten() else {
-            // The secret was removed after the event was queued.
-            return None;
-        };
+        let (secret, current) = (self.secret.clone(), self.current.clone());
+        let guard = job.guard.clone();
+        let read = tokio::task::spawn_blocking(move || (secret(), guard.map(|guard| (current(&guard.session_id), guard)))).await.ok();
+        let (secret, guard) = read?;
+        if let Some((now, guard)) = guard {
+            if now != Some((Some(guard.supervisor.clone()), guard.epoch)) {
+                eprintln!("[orchestrator] webhook {} {} dropped: the task's supervision changed", job.event_type, job.id);
+                return None;
+            }
+        }
+        // The secret was removed after the event was queued.
+        let secret = secret?;
         let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
         let signature = sign(&secret, timestamp, &job.body);
         let sent = self
@@ -518,6 +568,8 @@ mod tests {
             supervisor: Some("hermes".into()),
             provider: "claude".into(),
             model: "opus".into(),
+            level: Some("manage".into()),
+            epoch: 3,
         }
     }
 
@@ -561,7 +613,8 @@ mod tests {
             ),
             (Event::TakenOver, "task.taken_over", json!({})),
             (Event::HandedOver { last_reply: "Done so far.".into() }, "task.handed_over", json!({"lastReply": "Done so far."})),
-            (Event::Released, "task.released", json!({})),
+            (Event::Released { handover: None }, "task.released", json!({})),
+            (Event::Released { handover: Some(json!({"from": "hermes", "next": "Merge it."})) }, "task.released", json!({"handover": {"from": "hermes", "next": "Merge it."}})),
         ];
         for (event, kind, data) in cases {
             let body = payload("0d9f6a52-4a1e-4c7b-8f4b-2f3c9b2a1e10", 1_792_627_000_000, &task(), &event);
@@ -573,10 +626,11 @@ mod tests {
                 json!({"id": "t1", "projectId": "p1", "projectName": "Panda", "title": "Fix the login bug", "status": "running", "supervisor": "hermes", "provider": "claude", "model": "opus"})
             );
             assert_eq!(body["data"], data, "{kind}");
+            assert_eq!(body["supervision"], json!({"level": "manage", "epoch": 3}));
             let summary = body["summary"].as_str().unwrap();
             assert!(!summary.is_empty() && !summary.contains('\n'), "{kind}: {summary:?}");
             assert!(summary.contains("Fix the login bug") && summary.contains("Panda"), "{summary}");
-            assert_eq!(body.as_object().unwrap().len(), 6);
+            assert_eq!(body.as_object().unwrap().len(), 7);
         }
     }
 
@@ -643,7 +697,7 @@ mod tests {
     }
 
     fn job(id: &str) -> Job {
-        Job { id: id.into(), event_type: "task.released", url: "http://127.0.0.1:1/".into(), body: b"{}".to_vec(), attempt: 0, due: Instant::now() }
+        Job { id: id.into(), event_type: "task.released", url: "http://127.0.0.1:1/".into(), body: b"{}".to_vec(), attempt: 0, due: Instant::now(), guard: None }
     }
 
     #[test]
@@ -728,7 +782,7 @@ mod tests {
     }
 
     fn engine(delay: Duration) -> Engine {
-        Engine { client: http_client().unwrap(), secret: Arc::new(|| Some("s3cret".into())), delays: vec![delay; 3] }
+        Engine { client: http_client().unwrap(), secret: Arc::new(|| Some("s3cret".into())), current: Arc::new(|_| None), delays: vec![delay; 3] }
     }
 
     async fn wait_for(seen: &Arc<Mutex<Vec<Received>>>, count: usize) {
@@ -746,8 +800,8 @@ mod tests {
         let (url, seen) = receiver(vec![500, 200]).await;
         let outbox = Arc::new(Outbox::new(10));
         let worker = tokio::spawn(outbox.clone().run(engine(Duration::from_millis(50))));
-        let (id, body) = build_body(&task(), &Event::Released);
-        outbox.push(Job { id: id.clone(), event_type: "task.released", url, body: body.clone(), attempt: 0, due: Instant::now() });
+        let (id, body) = build_body(&task(), &Event::Released { handover: None });
+        outbox.push(Job { id: id.clone(), event_type: "task.released", url, body: body.clone(), attempt: 0, due: Instant::now(), guard: None });
 
         wait_for(&seen, 2).await;
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -781,6 +835,74 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(250)).await;
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(outbox.len(), 0);
+        worker.abort();
+    }
+
+    fn session(supervisor: Option<&str>, level: Option<&str>, epoch: i64) -> crate::storage::Session {
+        let store = crate::storage::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let dir = std::env::temp_dir().join(format!("pandacode-hooks-admit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = store.add_project(&dir).unwrap();
+        let mut task = store.create_session(&project.id, "claude", "", "auto").unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        task.supervisor = supervisor.map(str::to_owned);
+        task.supervision_level = level.map(str::to_owned);
+        task.supervision_epoch = epoch;
+        task
+    }
+
+    #[test]
+    fn only_the_supervisor_hears_and_watching_hears_less() {
+        let finished = Event::Finished { outcome: "done".into(), final_reply: String::new(), changed_files: vec![] };
+        let human = Event::HumanMessage { text: "hi".into(), delivery: "message".into() };
+        let released = Event::Released { handover: None };
+        let managed = session(Some("hermes"), Some("manage"), 4);
+        let guard = admit(&managed, "hermes", &finished).unwrap().unwrap();
+        assert_eq!((guard.supervisor.as_str(), guard.epoch), ("hermes", 4));
+        assert!(admit(&managed, "hermes", &human).is_some());
+        assert_eq!(admit(&managed, "hermes", &released), Some(None), "the end is announced without a guard");
+        assert_eq!(admit(&managed, "other", &finished), None);
+        assert_eq!(admit(&session(None, None, 5), "hermes", &finished), None, "the user's tasks send nothing");
+        let watched = session(Some("hermes"), Some("watch"), 2);
+        assert!(admit(&watched, "hermes", &finished).is_some());
+        assert!(admit(&watched, "hermes", &Event::NeedsResponse { kind: "approval".into(), request_id: "r".into(), text: String::new() }).is_some());
+        assert_eq!(admit(&watched, "hermes", &human), None);
+        assert_eq!(admit(&watched, "hermes", &Event::HumanResponded { request_id: "r".into(), approved: Some(true), answer: None }), None);
+        assert_eq!(admit(&watched, "hermes", &Event::TakenOver), Some(None));
+    }
+
+    #[tokio::test]
+    async fn a_delayed_event_is_dropped_after_a_takeover() {
+        let (url, seen) = receiver(vec![500, 200]).await;
+        // The task moves to epoch 8 (taken over and handed back) while the first attempt is retried.
+        let epoch = Arc::new(Mutex::new(7_i64));
+        let shared = epoch.clone();
+        let mut engine = engine(Duration::from_millis(100));
+        engine.current = Arc::new(move |_| Some((Some("hermes".into()), *shared.lock().unwrap())));
+        let outbox = Arc::new(Outbox::new(10));
+        let worker = tokio::spawn(outbox.clone().run(engine));
+        let mut guarded = job("guarded");
+        guarded.url = url.clone();
+        guarded.guard = Some(Guard { session_id: "t1".into(), supervisor: "hermes".into(), epoch: 7 });
+        outbox.push(guarded);
+        wait_for(&seen, 1).await;
+        *epoch.lock().unwrap() = 8;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(seen.lock().unwrap().len(), 1, "the retry is dropped once the epoch changed");
+        assert_eq!(outbox.len(), 0);
+        // Stale before the first attempt: never sent. Unguarded (the end announcement): sent.
+        let mut stale = job("stale");
+        stale.url = url.clone();
+        stale.guard = Some(Guard { session_id: "t1".into(), supervisor: "hermes".into(), epoch: 7 });
+        outbox.push(stale);
+        let mut ending = job("ending");
+        ending.url = url;
+        outbox.push(ending);
+        wait_for(&seen, 2).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[1].header("x-request-id"), "ending");
         worker.abort();
     }
 }

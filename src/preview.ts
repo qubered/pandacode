@@ -65,7 +65,7 @@ for (const s of sessions) {
 loadThreadOrder();
 // One sample task already tracks a GitHub issue so chips have something to show.
 // One sample task is supervised by Hermes, with a message Hermes sent.
-sessions[3].supervisor = 'hermes';
+sessions[3].supervisor = 'hermes'; sessions[3].supervisionLevel = 'manage'; sessions[3].supervisionEpoch = 1;
 sessions[2].issue = { kind: 'issue', number: 131, url: 'https://github.com/orbit-labs/orbit/issues/131', title: 'Keyboard shortcut cheat sheet', state: 'open', checkedAt: now };
 let id = 10;
 let previewClaudeMode: 'inherit' | 'subscription' = 'inherit';
@@ -894,6 +894,8 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
     case 'update_session': {
       const s = session(args.sessionId);
       if (args.archived === false && s.archived && s.taskStage === 'completed') s.completedAt = Date.now();
+      // A new mode voids a supervision grant, as the core does.
+      if (args.mode != null && args.mode !== s.mode && s.supervisionGrant) { s.supervisionGrant = null; s.supervisionEpoch = (s.supervisionEpoch ?? 0) + 1; }
       Object.assign(s, Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'sessionId')), { updatedAt: Date.now() }); break;
     }
     case 'set_reasoning_effort': {
@@ -1134,7 +1136,8 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
     case 'set_task_supervisor': {
       const task = session(args.sessionId), orchestrator = previewOrchestrator.settings();
       if (args.supervisor != null && args.supervisor !== orchestrator.name) throw new Error(`Only ${orchestrator.name} can supervise tasks.`);
-      task.supervisor = args.supervisor ?? null; result = structuredClone(task); emit('sessions-changed', {}); break;
+      if (args.level != null && !['watch', 'manage'].includes(args.level)) throw new Error('The level must be watch or manage.');
+      Object.assign(task, previewOrchestrator.supervise(task, args.supervisor ?? null, args.level ?? 'manage', args.grantMode ?? null)); result = structuredClone(task); emit('sessions-changed', {}); break;
     }
     case 'cloud_connections': result = previewCloud.connections(); break;
     case 'cloud_connect': result = previewCloud.connect(args.provider, args.key, args.options ?? {}); emit('vm-changed', {}); break;

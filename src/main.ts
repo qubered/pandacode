@@ -45,7 +45,7 @@ import { JevActivity } from './jev-activity';
 import { initializeSidebarResizing } from './sidebar-resize';
 import { changeUiScale, initializeUiSizing, setUiScale } from './ui-size';
 import { approvalBarHtml } from './approval-bar';
-import { orchestratorLabel, supervisorBadge } from './orchestrator';
+import { handoverHtml, modeAbove, orchestratorLabel, supervisionText, supervisorBadge } from './orchestrator';
 import { createThreadFind } from './thread-find';
 import { botAvatar, botsBarHtml, botsListHtml, botsPanelHeadHtml, storedSidebarView, storeSidebarView, syncSeen, type SidebarView } from './sidebar-bots';
 import { connectAgentUiActions, type AgentUiAction } from './agent-ui-actions';
@@ -862,7 +862,7 @@ function renderNavigation(): void {
     const projectName = `<span class="task-project">${escape(p?.name ?? 'Project')}</span>`;
     // Inside a project's folder the heading already names the project: one line with the
     // title, then the worktree mark, linked PR or issue, status, age and harness.
-    const supervisor = supervisorBadge(s.supervisor, escape);
+    const supervisor = supervisorBadge(s.supervisor, escape, s.supervisionLevel);
     if (inFolder) return `${button}<span class="task-line task-top"><span class="task-title">${escape(s.title)}</span>${worktreeMark}${linkMark}${supervisor}${pin}${projectName}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`;
     // With one project chosen the filter names it: two lines, the title and then the rest.
     const head = inProject
@@ -948,28 +948,39 @@ function renderHeader(): void {
   }
 }
 /** Whether an orchestrator (Hermes) may be handed tasks, and what it is called; read at startup and after Settings saves. */
-let orchestrator = { enabled: false, name: 'hermes' };
+let orchestrator = { enabled: false, name: 'hermes', maxMode: 'auto' };
 async function loadOrchestrator(): Promise<void> {
   try {
-    const view = await call<{ enabled: boolean; name: string }>('orchestrator_settings');
-    orchestrator = { enabled: view.enabled, name: view.name };
-  } catch { orchestrator = { enabled: false, name: 'hermes' }; }
+    const view = await call<{ enabled: boolean; name: string; maxMode?: string }>('orchestrator_settings');
+    orchestrator = { enabled: view.enabled, name: view.name, maxMode: view.maxMode ?? 'auto' };
+  } catch { orchestrator = { enabled: false, name: 'hermes', maxMode: 'auto' }; }
   if (session()) renderHeader();
 }
 /** The open task's supervision in the header: who supervises, and a way to take the task back. */
 function supervisorCrumb(): string {
-  const supervisor = session()?.supervisor;
+  const s = session(), supervisor = s?.supervisor;
   if (!supervisor) return '';
   const name = escape(orchestratorLabel(supervisor));
-  return `<div class="supervisor-crumb"><span class="supervisor-label">Supervised by ${name}</span><button type="button" class="secondary-button" data-action="take-over" title="Take this task back from ${name}">Take over</button></div>`;
+  return `<div class="supervisor-crumb"><span class="supervisor-label" title="${s?.supervisionLevel === 'watch' ? `${name} can read this task and is told when it finishes or needs an answer` : `${name} can message this task, answer its approvals and stop it`}">${escape(supervisionText(supervisor, s?.supervisionLevel))}</span><button type="button" class="secondary-button" data-action="take-over" title="Take this task back from ${name}">Take over</button></div>`;
 }
-/** Hands the open task to the orchestrator, or takes it back (null). */
-async function setSupervisor(id: string, supervisor: string | null): Promise<void> {
-  const saved = await call<Session>('set_task_supervisor', { sessionId: id, supervisor });
+/** Hands the open task to the orchestrator to watch or manage, changes that level, or takes it back (null). */
+/** Handing over a task above the orchestrator's highest mode: the user grants that mode for this task only. */
+function showGrantSupervision(task: Session, name: string): void {
+  const label = escape(orchestratorLabel(name)), mode = escape(task.mode === 'full' ? 'Full access' : task.mode);
+  const dialog = modal(`Let ${label} manage this ${mode} task?`, `<form id="grant-supervision-form"><p>This task runs in ${mode} mode, above the highest mode ${label} may use (${escape(orchestrator.maxMode)}). ${label} could message it, answer its approvals and stop it in that mode.</p><p>This applies to this task only and ends when you take it over, change its mode, or ${label} releases it.</p><div class="dialog-footer"><button type="button" class="secondary-button" data-action="close-dialog">Cancel</button><button type="submit" class="primary-button">Let ${label} manage this ${mode} task (this task only)</button></div></form>`, 'grant-supervision-dialog');
+  const form = dialog.querySelector<HTMLFormElement>('#grant-supervision-form')!;
+  form.querySelector<HTMLButtonElement>('[data-action="close-dialog"]')!.focus();
+  form.addEventListener('submit', event => {
+    event.preventDefault(); event.stopPropagation(); closeModal();
+    void setSupervisor(task.id, name, 'manage', task.mode).catch(report);
+  });
+}
+async function setSupervisor(id: string, supervisor: string | null, level: 'watch' | 'manage' = 'manage', grantMode: string | null = null): Promise<void> {
+  const saved = await call<Session>('set_task_supervisor', { sessionId: id, supervisor, level, grantMode });
   const task = state.sessions.find(item => item.id === id);
-  if (task) task.supervisor = saved?.supervisor ?? supervisor;
+  if (task) { task.supervisor = saved?.supervisor ?? supervisor; task.supervisionLevel = saved?.supervisionLevel ?? (supervisor ? level : null); task.supervisionEpoch = saved?.supervisionEpoch ?? task.supervisionEpoch; task.supervisionGrant = saved?.supervisionGrant ?? null; }
   renderNavigation(); renderHeader(); renderApprovalBar();
-  notify(supervisor ? `${orchestratorLabel(supervisor)} is supervising this task` : 'You took this task over');
+  notify(supervisor ? `${orchestratorLabel(supervisor)} is ${level === 'watch' ? 'watching' : 'supervising'} this task` : 'You took this task over');
   await reloadSessions();
 }
 /** What the empty prompt invites: a task, or a message to the bot whose thread this is. */
@@ -1121,6 +1132,7 @@ function messageHtml(m: Message): string {
     if (!handoff) return '';
     return `<details class="provider-handoff"><summary>${providerLogo(handoff.fromProvider)}${icon('forward')}${providerLogo(handoff.toProvider)}<span>Conversation carried forward</span>${icon('down')}</summary><p>${escape(handoff.summary)}</p></details>`;
   }
+  if (m.role === 'handover') return handoverHtml(m.content, escape);
   if (m.role === 'coordination') return renderCoordination(m);
   if (m.role === 'tool') {
     const tool = decodeToolActivity(m.content);
@@ -2885,8 +2897,9 @@ async function showTaskMenu(anchor: HTMLElement): Promise<void> {
     { id: 'jev-tests', label: 'Browser tests with Jev', icon: 'spark' },
     ...jevDecisionsEnabled ? [{ id: 'jev-assist', label: 'Jev assistance', icon: 'spark' }] : [],
     { id: 'archive-task', label: s.archived ? 'Restore task' : 'Archive task', icon: 'archive' },
-    ...s.supervisor ? [{ id: 'take-over', label: 'Take over from ' + orchestratorLabel(s.supervisor), icon: 'back' }]
-      : orchestrator.enabled && !s.archived && !botProjects.has(s.projectId) ? [{ id: 'supervise-task', label: 'Let ' + orchestratorLabel(orchestrator.name) + ' supervise', icon: 'bot' }] : [],
+    ...s.supervisor ? [{ id: 'take-over', label: 'Take over from ' + orchestratorLabel(s.supervisor), icon: 'back' },
+        s.supervisionLevel === 'watch' ? { id: 'supervise-task', label: 'Let ' + orchestratorLabel(s.supervisor) + ' manage', icon: 'bot' } : { id: 'watch-task', label: 'Let ' + orchestratorLabel(s.supervisor) + ' only watch', icon: 'bot' }]
+      : orchestrator.enabled && !s.archived && !botProjects.has(s.projectId) ? [{ id: 'supervise-task', label: 'Let ' + orchestratorLabel(orchestrator.name) + ' supervise', icon: 'bot' }, { id: 'watch-task', label: 'Let ' + orchestratorLabel(orchestrator.name) + ' watch', icon: 'bot' }] : [],
     ...s.provider === 'codex' ? [{ id: 'goal', label: 'Manage goal', icon: 'spark' }, { id: 'jobs', label: 'Background commands', icon: 'terminal' }, { id: 'usage', label: 'Codex usage', icon: 'activity' }] : [],
     { id: 'harness-console', label: 'Open harness console', icon: 'terminal' },
     { id: 'copy-path', label: s.worktreePath ? 'Copy worktree path' : 'Copy project path', icon: 'copy' },
@@ -3029,7 +3042,7 @@ async function showSettings(section?: import('./settings').SettingsSection): Pro
       github: target => github.mountSettings(target, project()?.id ?? state.projects[0]?.id ?? ''),
       teams: { loadModels, call },
       cloud: { call, listen: (name, callback) => subscribe(name, callback) },
-      orchestrator: { call, changed: view => { orchestrator = { enabled: view.enabled, name: view.name }; if (session()) renderHeader(); } },
+      orchestrator: { call, changed: view => { orchestrator = { enabled: view.enabled, name: view.name, maxMode: view.maxMode ?? 'auto' }; if (session()) renderHeader(); } },
       embed: {
         colors: async target => (await import('./theme-settings')).mountThemeSettings(target, { call, notify, chooseVsix: () => import('./bridge').then(bridge => bridge.chooseVsix()) }),
         wallpapers: async target => {
@@ -3379,7 +3392,13 @@ async function action(name: string, element: HTMLElement): Promise<void> {
     case 'ui-size-reset': setUiScale(1); break;
     case 'archive-task': { const s = session(); if (s) await archiveTask(s, true); break; }
     case 'take-over': { const s = session(); if (s?.supervisor) await setSupervisor(s.id, null); break; }
-    case 'supervise-task': { const s = session(); if (s && !s.supervisor && orchestrator.enabled) await setSupervisor(s.id, orchestrator.name); break; }
+    case 'supervise-task': {
+      const s = session(); if (!s || !(s.supervisor ? s.supervisionLevel === 'watch' : orchestrator.enabled)) break;
+      const name = s.supervisor ?? orchestrator.name;
+      if (modeAbove(s.mode, orchestrator.maxMode)) showGrantSupervision(s, name); else await setSupervisor(s.id, name, 'manage');
+      break;
+    }
+    case 'watch-task': { const s = session(); if (s && (s.supervisor ? s.supervisionLevel !== 'watch' : orchestrator.enabled)) await setSupervisor(s.id, s.supervisor ?? orchestrator.name, 'watch'); break; }
     case 'delete-task': showDeleteTask(); break;
     case 'search': showCommands(); break;
     case 'retry-response': { const finishing = finishingStreams.get(state.sessionId); if (finishing) await finishResponse(state.sessionId, finishing); break; }

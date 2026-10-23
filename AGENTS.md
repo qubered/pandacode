@@ -43,10 +43,12 @@ It adds three things:
 - **Files:**
   - `mod.rs`: settings (`orchestrator.json`; the token and webhook secret in the secret store), `clamp_mode`, endpoint lifecycle, and the `orchestrator_*` / `set_task_supervisor` commands.
   - `mcp.rs`: hand-rolled HTTP JSON-RPC MCP. It needs the bearer token, refuses any request with an `Origin`, and spawns each tool call.
-  - `tools.rs`: the 12 `pandacode_*` tools, plus `drain_next`.
+  - `tools.rs`: the 13 `pandacode_*` tools (including `attach_task`), plus `drain_next`.
   - `hooks.rs`: signed webhooks (Hermes "Generic V2"), delivered from a FIFO with retries.
-- **Data (schema 26):** `sessions.supervisor` (who supervises; NULL is the user), `messages.sender` and `queued_messages.sender`.
+- **Data (schema 27):** `sessions.supervisor` (who supervises; NULL is the user), `sessions.supervision_level` (`watch`/`manage`), `sessions.supervision_epoch` (bumped on every supervisor, level or grant change), `sessions.supervision_grant` (a mode above `maxMode` the user granted for that task only), `messages.sender` and `queued_messages.sender`. Released tasks keep their handover note as a `role='handover'` message.
 - **Supervision rules:**
+  - Read tools work on any task; write tools (`send_message`, `respond`, `stop_task`) need supervisor = ours, level `manage`, the mode within `maxMode` or granted (`within_ceiling`), and the caller's required current `epoch`. They re-check (`authorized`) immediately before acting, and `queue`/`take_next`/`deliver_next` re-check under the store lock.
+  - Every change goes through `Store::set_supervision[_granted]`, which bumps the epoch and deletes the orchestrator's queued messages (the user's stay). Only `set_task_supervisor` (the human UI command, `grantMode`) can set a grant; tools never do, and a mode change (`Store::update`) voids it. `hooks.rs` drops events whose task moved to another supervisor or epoch, at enqueue and at delivery.
   - The orchestrator answers approvals only on tasks it supervises.
   - It never launches a task above `maxMode`, nor messages one running above it (`mode_allowed`).
   - Supervised tasks drain their queue in the core (`tools::drain_next`, called at run end). The window skips `dispatchQueue` for them and hides Send now.

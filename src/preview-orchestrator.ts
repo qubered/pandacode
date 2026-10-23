@@ -24,5 +24,14 @@ export function createPreviewOrchestrator() {
       return view();
     },
     revealToken(): string { tokenSet = true; return 'preview-orchestrator-token'; },
+    /** set_task_supervisor's change to a task: level only with a supervisor, a grant only at manage
+     *  and equal to the task's mode, and a new epoch on any change. */
+    supervise(task: { mode?: string; supervisor?: string | null; supervisionLevel?: string | null; supervisionEpoch?: number; supervisionGrant?: string | null }, supervisor: string | null, level: 'watch' | 'manage', grantMode: string | null = null) {
+      if (grantMode && (!supervisor || level !== 'manage')) throw new Error('A mode can be granted only to an orchestrator that manages the task.');
+      if (grantMode && grantMode !== task.mode) throw new Error(`The grant must be the task's current mode (${task.mode}).`);
+      const next = { supervisor, supervisionLevel: supervisor ? level : null, supervisionGrant: grantMode || null };
+      const changed = (task.supervisor ?? null) !== next.supervisor || (task.supervisionLevel ?? null) !== next.supervisionLevel || (task.supervisionGrant ?? null) !== next.supervisionGrant;
+      return { ...next, supervisionEpoch: (task.supervisionEpoch ?? 0) + (changed ? 1 : 0) };
+    },
   };
 }

@@ -755,7 +755,7 @@ async fn dispatch(
                 return Err("Use this on another task; the current task is already running this turn.".into());
             }
             if name == "pandacode_steer_task" {
-                crate::message_queue::steer_task_inner(state, target.id.clone(), string(&args, "text")).await?;
+                crate::message_queue::steer_task_inner(state, target.id.clone(), string(&args, "text"), None).await?;
                 let _ = app.emit("sessions-changed", ());
                 json!({"steered": true})
             } else {
