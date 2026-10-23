@@ -1505,6 +1505,7 @@ pub(crate) mod admission_barrier {
     use std::sync::Mutex;
     type Hook = Box<dyn FnOnce() + Send>;
     static HOOK: Mutex<Option<Hook>> = Mutex::new(None);
+    #[cfg(feature = "headless")]
     pub(crate) fn set(hook: Hook) {
         *HOOK.lock().unwrap() = Some(hook);
     }
