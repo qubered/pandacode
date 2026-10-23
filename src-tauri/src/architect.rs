@@ -649,7 +649,7 @@ pub async fn architect_start(
     text: String,
     image_ids: Option<Vec<String>>,
 ) -> Result<()> {
-    architect_start_in_project(app, state, session_id, text, image_ids, None).await
+    architect_start_in_project(app, state, session_id, text, image_ids, None, None).await
 }
 
 pub(crate) async fn architect_start_in_project(
@@ -659,9 +659,10 @@ pub(crate) async fn architect_start_in_project(
     text: String,
     image_ids: Option<Vec<String>>,
     expected_project: Option<String>,
+    authority: Option<crate::orchestrator::Authority>,
 ) -> Result<()> {
     text_check(&text)?;
-    let (team, admission) = start_state(&state, &session_id, &text, image_ids.clone(), expected_project.as_deref())?;
+    let (team, admission) = start_state_as(&state, &session_id, &text, image_ids.clone(), expected_project.as_deref(), authority.as_ref())?;
     emit(&app, &team);
     if let Err(error) = crate::launch_team_task(
         app.clone(),
@@ -670,6 +671,7 @@ pub(crate) async fn architect_start_in_project(
         text,
         image_ids,
         admission.clone(),
+        authority,
     )
     .await
     {
@@ -679,6 +681,7 @@ pub(crate) async fn architect_start_in_project(
     Ok(())
 }
 /// Begin a new objective for an idle team and reserve the architect's first turn.
+#[cfg(test)]
 pub(crate) fn start_state(
     state: &AppState,
     session_id: &str,
@@ -686,8 +689,23 @@ pub(crate) fn start_state(
     image_ids: Option<Vec<String>>,
     expected_project: Option<&str>,
 ) -> Result<(TeamSnapshot, Admission)> {
+    start_state_as(state, session_id, text, image_ids, expected_project, None)
+}
+
+/// `start_state` for an orchestrator: its `authority` is verified under the locks that reserve the team.
+pub(crate) fn start_state_as(
+    state: &AppState,
+    session_id: &str,
+    text: &str,
+    image_ids: Option<Vec<String>>,
+    expected_project: Option<&str>,
+    authority: Option<&crate::orchestrator::Authority>,
+) -> Result<(TeamSnapshot, Admission)> {
     let agents = state.agents.lock().map_err(|e| e.to_string())?;
     let store = state.store.lock().map_err(|e| e.to_string())?;
+    if let Some(authority) = authority {
+        authority.check(&store.session(session_id)?)?;
+    }
     if let Some(project) = expected_project {
         if store.session(session_id)?.project_id != project {
             return Err("Task moved to a different project. Read its details again.".into());
@@ -767,10 +785,23 @@ pub async fn architect_control(
     wake(app);
     Ok(team)
 }
+/// Stops a team for an orchestrator; its `authority` is verified under the locks that stop the agents.
+pub(crate) fn stop_team_as(app: &crate::AppHandle, state: &AppState, session_id: &str, authority: &crate::orchestrator::Authority) -> Result<()> {
+    let team = control_state_as(state, session_id, "stop", Some(authority))?;
+    emit(app, &team);
+    wake(app.clone());
+    Ok(())
+}
 fn control_state(state: &AppState, session_id: &str, action: &str) -> Result<TeamSnapshot> {
+    control_state_as(state, session_id, action, None)
+}
+fn control_state_as(state: &AppState, session_id: &str, action: &str, authority: Option<&crate::orchestrator::Authority>) -> Result<TeamSnapshot> {
     let team = {
         let agents = state.agents.lock().map_err(|e| e.to_string())?;
         let store = state.store.lock().map_err(|e| e.to_string())?;
+        if let Some(authority) = authority {
+            authority.check(&store.session(session_id)?)?;
+        }
         let mut team = load(&store, session_id)?.ok_or("Team is unavailable.")?;
         match action {
             "pause" | "stop" => {
@@ -1447,6 +1478,7 @@ pub(crate) fn wake(app: crate::AppHandle) {
                             action.prompt,
                             action.images,
                             action.admission.clone(),
+                            None,
                         )
                         .await
                         {

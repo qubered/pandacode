@@ -13,16 +13,38 @@ You keep using PandaCode as usual on the same tasks. Design:
 ## How control works
 
 - **Supervision:** tasks Hermes creates are *supervised by Hermes*. A badge in the
-  sidebar marks them.
+  sidebar marks them. Every supervised task has a **level**:
+  - **watch**: Hermes can read the task and wait on it, and is woken only when a run
+    finishes or an answer is needed. It cannot message, answer or stop it.
+  - **manage**: Hermes can also message, steer, answer approvals and questions, and stop.
+- **Epoch:** a number on each task that changes whenever its supervisor, level or grant
+  changes. Write tools accept the epoch Hermes last saw and refuse a stale one, so a call
+  planned before you took a task over never lands after it.
 - **Approvals and questions:** on those tasks, either of you can answer, and the first
   answer wins. Hermes cannot answer on tasks you supervise.
-- **Take over:** in the task header, this makes a task yours again. *Let Hermes
-  supervise* hands one of your tasks to Hermes.
+- **Take over:** in the task header, this makes a task yours again at once: the agent
+  keeps running (nothing restarts), messages Hermes queued are dropped (yours stay), its
+  pending webhooks are dropped, and its next write call is refused. *Let Hermes
+  supervise* / *Let Hermes watch* in the task menu hand one of your tasks over, or
+  change the level.
+- **Attach:** Hermes can also attach itself to one of your tasks with
+  `pandacode_attach_task`, running or waiting on an approval, without restarting it. It
+  cannot attach to a task another orchestrator supervises, nor manage one above its
+  highest mode.
+- **Handover:** when Hermes releases a task it can leave a note (what changed, what was
+  checked, what is still open, the next step). The note is saved on the task's thread
+  as *Handover from Hermes* and sent with `task.released`.
 - **Highest mode:** Hermes cannot start tasks above this setting. The default is Accept
   edits: file edits, and shell commands the agent CLI considers safe, run without asking,
   while other commands still ask. Hermes can always choose **Ask** mode for a task, so
-  every command needs an answer. Hermes cannot message tasks running above this setting
-  (such as your Full access tasks), so it can't use them to get around it.
+  every command needs an answer. Hermes cannot message, answer or stop tasks running
+  above this setting (such as your Full access tasks), so it can't use them to get
+  around it.
+- **Full access, this task only:** handing a task above the highest mode to Hermes asks
+  you to confirm *Let Hermes manage this Full-access task (this task only)*. That grants
+  Hermes this task's mode for this task alone; the setting itself does not change. Only
+  you can grant it (no tool can), and it ends when you take the task over, change its
+  mode, change the level, or hand it over again without it, or when Hermes releases it.
 - **Queued messages:** on supervised tasks, PandaCode delivers them itself. They go out
   even when no PandaCode window is open.
 
@@ -53,12 +75,34 @@ mcp_servers:
       Authorization: "Bearer <token>"
 ```
 
-The tools are:
-- `pandacode_list_projects`, `add_project`
-- `list_tasks`, `search_tasks`, `read_task`
-- `create_task`, `send_message`, `respond`
-- `release_task`, `stop_task`
-- `wait_for_task`, `list_models`
+The 13 tools (all prefixed `pandacode_`):
+
+| Tool | Needs |
+|---|---|
+| `list_projects`, `add_project`, `list_models` | nothing |
+| `list_tasks`, `search_tasks`, `read_task`, `wait_for_task` | nothing (any task) |
+| `attach_task {taskId, level}` | the task is yours or unsupervised; `manage` within the highest mode |
+| `create_task` | the task is created supervised at `manage` |
+| `send_message`, `respond`, `stop_task` | supervisor is Hermes, level `manage`, mode allowed (or granted), required current `epoch` |
+| `release_task {taskId, epoch, handover?}` | supervisor is Hermes, either level |
+
+`read_task` and `list_tasks` report `supervision: {level, epoch, grant}`; `attach_task`
+returns `{taskId, level, epoch, grant, status}`.
+
+### Contract for the Hermes plugin
+
+- Treat `supervision.epoch` as a lease. Read it from `create_task`, `attach_task`,
+  `read_task` or the webhook's `supervision` field, and pass it as `epoch` on every
+  `send_message`, `respond`, `stop_task` and `release_task`.
+- A refusal that says *Stale epoch*, *only watch* or *the user supervises* means the
+  delegation changed: stop acting on the task, re-read it, and do not retry the same call.
+- PandaCode re-checks supervisor, level, epoch and grant right before each action and
+  before delivering a queued message, so a refusal can arrive even after a successful read.
+- Webhooks for a delegation that ended are dropped; `task.taken_over` and `task.released`
+  are the last events of a delegation. At level watch, only `task.finished`,
+  `task.needs_response`, `task.handed_over`, `task.taken_over` and `task.released` arrive.
+- Release with a `handover` `{changed, checked, open, next}` (each up to 1500 bytes) when
+  handing work back.
 
 ## 3. Let PandaCode wake Hermes (optional)
 
@@ -89,6 +133,17 @@ are not processed twice.
 | `task.handed_over` | You handed a task to Hermes |
 | `task.released` | Hermes released a task |
 
-Only supervised tasks send webhooks. If Hermes is unreachable, PandaCode retries with
+Every payload carries `supervision: {level, epoch}`. Only supervised tasks send
+webhooks. If Hermes is unreachable, PandaCode retries with
 backoff for about 35 minutes. After that, Hermes can catch up with `list_tasks` and
 `read_task`.
+
+
+## Epoch is required on writes
+
+`send_message`, `respond`, `stop_task` and `release_task` must carry the `epoch` from
+`attach_task`, `create_task` or `read_task`; a call without it is refused. The authority is
+checked again where the action happens: when the run is claimed (including a team objective),
+when an approval, answer or steer is sent to the agent, when a team is stopped, and when a
+queued message is delivered (the epoch is captured at dequeue; a stale one is neither sent nor
+restored). A takeover that lands in between always wins.

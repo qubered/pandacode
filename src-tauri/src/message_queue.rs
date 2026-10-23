@@ -199,11 +199,11 @@ pub async fn queue_restore(state: State<'_, AppState>, entry: QueuedMessage) -> 
 /// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
 pub async fn steer_task(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, text: String) -> Result<()> {
-    steer_task_inner(state, session_id.clone(), text.clone()).await?;
+    steer_task_inner(state, session_id.clone(), text.clone(), None).await?;
     crate::orchestrator::hooks::notify(&app, &session_id, crate::orchestrator::hooks::Event::HumanMessage { text, delivery: "steer".into() });
     Ok(())
 }
-pub(crate) async fn steer_task_inner(state: State<'_, AppState>, session_id: String, text: String) -> Result<()> {
+pub(crate) async fn steer_task_inner(state: State<'_, AppState>, session_id: String, text: String, authority: Option<&crate::orchestrator::Authority>) -> Result<()> {
     let text = text.trim().to_owned();
     if text.is_empty() {
         return Err("Write a message to steer with.".into());
@@ -212,6 +212,11 @@ pub(crate) async fn steer_task_inner(state: State<'_, AppState>, session_id: Str
         let agents = state.agents.lock().map_err(|e| e.to_string())?;
         let agent = agents.get(&session_id).ok_or("The agent is not running; the message stays queued.")?;
         let (tx, rx) = tokio::sync::oneshot::channel();
+        // With an authority, the store guard spans the send: a takeover lands either first (refused) or after.
+        let store = authority.map(|_| state.store.lock().map_err(|e| e.to_string())).transpose()?;
+        if let (Some(authority), Some(store)) = (authority, &store) {
+            authority.check(&store.session(&session_id)?)?;
+        }
         agent.send(RunInput::Steer { text: text.clone(), reply: tx }).map_err(|_| "The agent has stopped.".to_string())?;
         rx
     };

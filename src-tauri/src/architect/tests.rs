@@ -2353,3 +2353,26 @@ fn a_resumed_conversation_gets_the_team_rules_once_and_only_new_messages() {
     store.db.execute("UPDATE sessions SET resume_id=NULL WHERE id=?1", [&sid]).unwrap();
     assert!(prompt(&store, &sid, "Go on", Some(&admission)).unwrap().contains("PandaCode architect mode. Coordinate"));
 }
+#[test]
+fn an_orchestrators_team_start_and_stop_are_fenced_by_its_epoch() {
+    let (state, sid) = state_fixture();
+    let authority = |epoch| crate::orchestrator::Authority { name: "hermes".into(), epoch, max_mode: "full".into() };
+    let epoch = {
+        let store = state.store.lock().unwrap();
+        store.set_supervision(&sid, Some("hermes"), Some("manage")).unwrap().supervision_epoch
+    };
+    // Taken over and handed back: the old epoch is stale for the start reservation and for stop.
+    {
+        let store = state.store.lock().unwrap();
+        store.set_supervision(&sid, None, None).unwrap();
+        store.set_supervision(&sid, Some("hermes"), Some("manage")).unwrap();
+    }
+    let before = load(&state.store.lock().unwrap(), &sid).unwrap().unwrap();
+    assert!(start_state_as(&state, &sid, "Objective", None, None, Some(&authority(epoch))).unwrap_err().contains("Stale epoch"));
+    assert!(control_state_as(&state, &sid, "stop", Some(&authority(epoch))).unwrap_err().contains("Stale epoch"));
+    let after = load(&state.store.lock().unwrap(), &sid).unwrap().unwrap();
+    assert_eq!((before.generation, before.status.as_str()), (after.generation, after.status.as_str()), "the team was not touched");
+    let current = state.store.lock().unwrap().session(&sid).unwrap().supervision_epoch;
+    control_state_as(&state, &sid, "stop", Some(&authority(current))).unwrap();
+    start_state_as(&state, &sid, "Objective", None, None, Some(&authority(current))).unwrap();
+}

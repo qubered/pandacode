@@ -92,6 +92,13 @@ pub struct Session {
     pub resume_at_reset: bool,
     /// The orchestrator supervising this task (such as "hermes"), or None for the user.
     pub supervisor: Option<String>,
+    /// "watch" (read and be woken) or "manage" (also message, answer, stop); None without a supervisor.
+    pub supervision_level: Option<String>,
+    /// Bumped on every supervisor or level change, so stale delegations can be refused.
+    pub supervision_epoch: i64,
+    /// A mode above the orchestrator's ceiling (such as "full") that the user let it manage on
+    /// this task only. It counts only while it equals the task's mode at level manage.
+    pub supervision_grant: Option<String>,
     pub resume_id: Option<String>,
     /// Checkout owned by this task; the project continues to identify its repository.
     pub worktree_path: Option<String>,
@@ -153,7 +160,7 @@ pub struct Store {
 type Result<T> = std::result::Result<T, String>;
 /// The newest `PRAGMA user_version`. Every migration step below must run for any
 /// database older than this, so the guard reads this constant, never a literal.
-pub const SCHEMA_VERSION: i64 = 26;
+pub const SCHEMA_VERSION: i64 = 27;
 
 const SIDEBAR_ORDER: &str = "pinned DESC,sidebar_order IS NULL,sidebar_order,COALESCE(MAX(last_response_at,last_prompt_at),last_response_at,last_prompt_at,created_at) DESC,id";
 
@@ -417,6 +424,19 @@ impl Store {
                 }
                 migration.execute_batch("PRAGMA user_version=26;").map_err(|e| e.to_string())?;
             }
+            if version < 27 {
+                // Authority levels: what the supervising orchestrator may do, and an epoch
+                // bumped on every change of supervisor or level (docs/hermes.md).
+                for (name, definition) in [("supervision_level", "TEXT"), ("supervision_epoch", "INTEGER NOT NULL DEFAULT 0"), ("supervision_grant", "TEXT")] {
+                    let exists: bool = migration.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name=?1)", [name], |r| r.get(0)).map_err(|e| e.to_string())?;
+                    if !exists {
+                        migration.execute_batch(&format!("ALTER TABLE sessions ADD COLUMN {name} {definition};")).map_err(|e| e.to_string())?;
+                    }
+                }
+                // Tasks handed over before levels existed were managed.
+                migration.execute_batch("UPDATE sessions SET supervision_level='manage' WHERE supervisor IS NOT NULL AND supervision_level IS NULL;
+                  PRAGMA user_version=27;").map_err(|e| e.to_string())?;
+            }
             migration.commit().map_err(|e| e.to_string())?;
         }
         let recovery = db.transaction().map_err(|e| e.to_string())?;
@@ -624,6 +644,9 @@ impl Store {
             limited_until: r.get(27)?,
             resume_at_reset: r.get(28)?,
             supervisor: r.get(29)?,
+            supervision_level: r.get(30)?,
+            supervision_epoch: r.get(31)?,
+            supervision_grant: r.get(32)?,
             resume_id: r.get(10)?,
             last_response_at: r.get(11)?,
             last_prompt_at: r.get(22)?,
@@ -648,7 +671,7 @@ impl Store {
     pub fn sessions(&self) -> Result<Vec<Session>> {
         // Lists only need a card preview. Full details remain in SQLite and are
         // fetched for the selected task or directly for an agent's Start prompt.
-        let mut stmt=self.db.prepare(&format!("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,substr(task_description,1,512),completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor FROM sessions WHERE draft=0 AND id NOT IN (SELECT session_id FROM architect_workers) ORDER BY {SIDEBAR_ORDER} LIMIT 500")).map_err(|e|e.to_string())?;
+        let mut stmt=self.db.prepare(&format!("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,substr(task_description,1,512),completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor,supervision_level,supervision_epoch,supervision_grant FROM sessions WHERE draft=0 AND id NOT IN (SELECT session_id FROM architect_workers) ORDER BY {SIDEBAR_ORDER} LIMIT 500")).map_err(|e|e.to_string())?;
         let rows = stmt
             .query_map([], Self::session_row)
             .map_err(|e| e.to_string())?;
@@ -662,7 +685,7 @@ impl Store {
     /// tasks and architect workers are left out. `supervisor` is None for any supervisor,
     /// `Some(None)` for tasks the user supervises, `Some(Some(name))` for that orchestrator's.
     pub fn list_tasks_filtered(&self, project_id: Option<&str>, status: Option<&str>, supervisor: Option<Option<&str>>, limit: usize) -> Result<Vec<Session>> {
-        let mut stmt = self.db.prepare("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,substr(task_description,1,512),completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor FROM sessions
+        let mut stmt = self.db.prepare("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,substr(task_description,1,512),completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor,supervision_level,supervision_epoch,supervision_grant FROM sessions
             WHERE draft=0 AND archived=0 AND id NOT IN (SELECT session_id FROM architect_workers)
               AND (?1 IS NULL OR project_id=?1) AND (?2 IS NULL OR status=?2) AND (?3=0 OR supervisor IS ?4)
             ORDER BY updated_at DESC,id LIMIT ?5").map_err(|e| e.to_string())?;
@@ -684,15 +707,49 @@ impl Store {
         rows.collect::<std::result::Result<_, _>>().map_err(|e| e.to_string())
     }
 
-    /// Sets or clears (None) the orchestrator supervising a task.
+    /// Sets or clears (None) the orchestrator supervising a task, at the manage level.
     pub fn set_supervisor(&self, sid: &str, supervisor: Option<&str>) -> Result<Session> {
-        let changed = self
-            .db
-            .execute("UPDATE sessions SET supervisor=?2 WHERE id=?1", params![sid, supervisor])
-            .map_err(|e| e.to_string())?;
-        if changed == 0 {
-            return Err("Conversation not found.".into());
+        self.set_supervision(sid, supervisor, Some("manage"))
+    }
+
+    /// Sets who supervises a task and at which level ("watch" or "manage"; ignored without a
+    /// supervisor), with no grant. Any change bumps `supervision_epoch` and deletes the messages
+    /// an orchestrator queued under the old delegation; the user's queued messages stay. An
+    /// unchanged supervisor and level (and no grant to clear) change nothing.
+    pub fn set_supervision(&self, sid: &str, supervisor: Option<&str>, level: Option<&str>) -> Result<Session> {
+        self.set_supervision_granted(sid, supervisor, level, None)
+    }
+
+    /// `set_supervision` with a grant: the user lets the orchestrator manage this task in
+    /// `grant`, its current mode, even above the orchestrator's ceiling. Only the user's
+    /// `set_task_supervisor` passes one; orchestrator tools never do. A grant needs a
+    /// supervisor at level manage and must equal the task's mode.
+    pub fn set_supervision_granted(&self, sid: &str, supervisor: Option<&str>, level: Option<&str>, grant: Option<&str>) -> Result<Session> {
+        let level = supervisor.map(|_| level.unwrap_or("manage"));
+        if level.is_some_and(|level| !matches!(level, "watch" | "manage")) {
+            return Err("The level must be watch or manage.".into());
         }
+        if grant.is_some() && level != Some("manage") {
+            return Err("A mode can be granted only to an orchestrator that manages the task.".into());
+        }
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        if let Some(grant) = grant {
+            let mode: Option<String> = tx.query_row("SELECT mode FROM sessions WHERE id=?1", [sid], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
+            if mode.as_deref().is_some_and(|mode| mode != grant) {
+                return Err(format!("The grant must be the task's current mode ({}).", mode.unwrap_or_default()));
+            }
+        }
+        let changed = tx
+            .execute(
+                "UPDATE sessions SET supervisor=?2,supervision_level=?3,supervision_grant=?4,supervision_epoch=supervision_epoch+1
+                 WHERE id=?1 AND (supervisor IS NOT ?2 OR supervision_level IS NOT ?3 OR supervision_grant IS NOT ?4)",
+                params![sid, supervisor, level, grant],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed > 0 {
+            tx.execute("DELETE FROM queued_messages WHERE session_id=?1 AND sender IS NOT NULL", [sid]).map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
         self.session(sid)
     }
 
@@ -729,7 +786,7 @@ impl Store {
     }
 
     pub fn session(&self, sid: &str) -> Result<Session> {
-        let mut session = self.db.query_row("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,task_description,completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor FROM sessions WHERE id=?1",[sid],Self::session_row).optional().map_err(|e|e.to_string())?.ok_or_else(||String::from("Conversation not found."))?;
+        let mut session = self.db.query_row("SELECT id,project_id,title,provider,model,mode,status,created_at,updated_at,archived,resume_id,last_response_at,worktree_path,reasoning_effort,context_used_tokens,context_window,task_stage,task_description,completed_at,goal_state,codex_settings,worktree_branch,last_prompt_at,pinned,sidebar_order,draft,limited_at,limited_until,resume_at_reset,supervisor,supervision_level,supervision_epoch,supervision_grant FROM sessions WHERE id=?1",[sid],Self::session_row).optional().map_err(|e|e.to_string())?.ok_or_else(||String::from("Conversation not found."))?;
         self.attach_links(std::slice::from_mut(&mut session))?;
         Ok(session)
     }
@@ -1340,6 +1397,8 @@ impl Store {
             return Err("Stop the agent before changing its model or approval behavior.".into());
         }
         let changed = self.db.execute("UPDATE sessions SET title=COALESCE(?2,title),title_origin=CASE WHEN ?2 IS NOT NULL THEN 'manual' ELSE title_origin END,archived=COALESCE(?3,archived),model=COALESCE(?4,model),mode=COALESCE(?5,mode),
+            supervision_grant=CASE WHEN ?5 IS NOT NULL AND ?5<>mode THEN NULL ELSE supervision_grant END,
+            supervision_epoch=supervision_epoch+CASE WHEN ?5 IS NOT NULL AND ?5<>mode AND supervision_grant IS NOT NULL THEN 1 ELSE 0 END,
             completed_at=CASE WHEN archived=1 AND ?3=0 AND task_stage='completed' THEN ?6 ELSE completed_at END,
             reasoning_effort=CASE WHEN model<>COALESCE(?4,model) THEN NULL ELSE reasoning_effort END,
             context_used_tokens=CASE WHEN model<>COALESCE(?4,model) THEN NULL ELSE context_used_tokens END,
@@ -3556,6 +3615,22 @@ mod orchestration_tests {
         assert_eq!(store.session(&task.id).unwrap().supervisor.as_deref(), Some("hermes"));
         assert_eq!(store.set_supervisor(&task.id, None).unwrap().supervisor, None);
         assert!(store.set_supervisor("missing", Some("hermes")).is_err());
+        // Every change of supervisor or level bumps the epoch and drops the orchestrator's queue.
+        let epoch = store.session(&task.id).unwrap().supervision_epoch;
+        let watched = store.set_supervision(&task.id, Some("hermes"), Some("watch")).unwrap();
+        assert_eq!((watched.supervision_level.as_deref(), watched.supervision_epoch), (Some("watch"), epoch + 1));
+        assert_eq!(store.set_supervision(&task.id, Some("hermes"), Some("watch")).unwrap().supervision_epoch, epoch + 1, "no change, no bump");
+        let theirs = crate::message_queue::add(&store, &task.id, "from hermes", &serde_json::json!([])).unwrap();
+        store.queue_set_sender(&theirs.id, "hermes").unwrap();
+        crate::message_queue::add(&store, &task.id, "from the user", &serde_json::json!([])).unwrap();
+        let managed = store.set_supervision(&task.id, Some("hermes"), Some("manage")).unwrap();
+        assert_eq!((managed.supervision_level.as_deref(), managed.supervision_epoch), (Some("manage"), epoch + 2));
+        let left: Vec<String> = crate::message_queue::list(&store, Some(&task.id)).unwrap().into_iter().map(|e| e.text).collect();
+        assert_eq!(left, ["from the user"]);
+        let released = store.set_supervision(&task.id, None, Some("manage")).unwrap();
+        assert_eq!((released.supervisor, released.supervision_level, released.supervision_epoch), (None, None, epoch + 3));
+        assert!(store.set_supervision(&task.id, Some("hermes"), Some("admin")).is_err());
+        store.set_supervisor(&task.id, None).unwrap();
         store.begin_task_turn(&task.id, "hello").unwrap();
         let id = store.latest_user_message_id(&task.id).unwrap().unwrap();
         store.set_message_sender(id, "hermes").unwrap();

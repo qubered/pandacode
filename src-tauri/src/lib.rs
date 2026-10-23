@@ -117,12 +117,26 @@ impl RunningAgent {
         self.approvals.lock().map_or(true, |approvals| !approvals.is_empty())
     }
 
+    #[cfg(test)]
     fn respond_approval(
         &self,
         store: &Mutex<Store>,
         session_id: &str,
         request_id: String,
         approved: bool,
+    ) -> Result<()> {
+        self.respond_approval_as(store, session_id, request_id, approved, None)
+    }
+
+    /// As `respond_approval`; an orchestrator's `authority` is checked under the store lock that
+    /// guards the send, so a takeover either happens first (refused) or after (answer stands).
+    fn respond_approval_as(
+        &self,
+        store: &Mutex<Store>,
+        session_id: &str,
+        request_id: String,
+        approved: bool,
+        authority: Option<&orchestrator::Authority>,
     ) -> Result<()> {
         // Lock order is registry (caller) -> approvals -> store. A new request
         // cannot become waiting between deciding the status and persisting it.
@@ -135,6 +149,9 @@ impl RunningAgent {
             .ok_or("This approval belongs to an earlier run.")?
             .to_string();
         let store = store.lock().map_err(|error| error.to_string())?;
+        if let Some(authority) = authority {
+            authority.check(&store.session(session_id)?)?;
+        }
         self.send(RunInput::Approval {
             request_id: original_id,
             approved,
@@ -1092,9 +1109,23 @@ pub(crate) async fn send_message_inner(
     app: crate::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    text: String,
+    image_ids: Option<Vec<String>>,
+    moodboard_ids: Option<Vec<String>>,
+) -> Result<()> {
+    send_message_as(app, state, session_id, text, image_ids, moodboard_ids, None).await
+}
+
+/// `send_message_inner` for an orchestrator, whose `authority` is checked where the turn (or the
+/// team objective) is reserved and again at final run admission.
+pub(crate) async fn send_message_as(
+    app: crate::AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
     mut text: String,
     image_ids: Option<Vec<String>>,
     moodboard_ids: Option<Vec<String>>,
+    authority: Option<orchestrator::Authority>,
 ) -> Result<()> {
     let (is_team, project_id) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -1115,16 +1146,18 @@ pub(crate) async fn send_message_inner(
             text,
             image_ids,
             Some(project_id),
+            authority,
         )
         .await;
     }
-    launch_task_in_project(
+    launch_task_as(
         app,
         state,
         session_id,
         Some(text),
         image_ids,
         Some(project_id),
+        authority,
     )
     .await
 }
@@ -1160,6 +1193,8 @@ struct RunAdmission<'a> {
     command: Option<PreparedCommand>,
     goal: Option<goal_state::GoalRequest>,
     team: Option<architect::Admission>,
+    /// An orchestrator's authority, re-checked under the same locks as the run claim.
+    authority: Option<orchestrator::Authority>,
 }
 
 struct PreparedRun {
@@ -1217,6 +1252,9 @@ fn prepare_task_run_in_project(
     let store = state.store.lock().map_err(|e| e.to_string())?;
     architect::validate_admission(&store, &session_id, admission.team.as_ref())?;
     let session = reconcile_inactive_task(&store, &agents, store.session(&session_id)?);
+    if let Some(authority) = &admission.authority {
+        authority.check(&session)?;
+    }
     if admission.goal.is_some() && session.provider != "codex" {
         return Err(
             "Goals require the Codex harness. The task provider changed before it started.".into(),
@@ -1383,14 +1421,31 @@ async fn launch_task_in_project(
     image_ids: Option<Vec<String>>,
     expected_project: Option<String>,
 ) -> Result<()> {
-    launch_operation(
+    launch_task_as(app, state, session_id, text, image_ids, expected_project, None).await
+}
+
+/// Starts a turn on behalf of an orchestrator: `authority` is verified again when the run is claimed.
+async fn launch_task_as(
+    app: crate::AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    text: Option<String>,
+    image_ids: Option<Vec<String>>,
+    expected_project: Option<String>,
+    authority: Option<orchestrator::Authority>,
+) -> Result<()> {
+    launch_operation_admitted(
         app,
         state,
         session_id,
         text,
         image_ids,
-        expected_project,
-        None,
+        OperationAdmission {
+            expected_project,
+            goal: None,
+            team: None,
+            authority,
+        },
     )
     .await
 }
@@ -1414,6 +1469,7 @@ async fn launch_operation(
             expected_project,
             goal,
             team: None,
+            authority: None,
         },
     )
     .await
@@ -1426,6 +1482,7 @@ pub(crate) fn launch_team_task<'a>(
     text: String,
     image_ids: Option<Vec<String>>,
     admission: architect::Admission,
+    authority: Option<orchestrator::Authority>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
     Box::pin(launch_operation_admitted(
         app,
@@ -1437,14 +1494,34 @@ pub(crate) fn launch_team_task<'a>(
             expected_project: None,
             goal: None,
             team: Some(admission),
+            authority,
         },
     ))
+}
+
+/// Test hook: runs once between command resolution and the run claim, where a takeover can land.
+#[cfg(test)]
+pub(crate) mod admission_barrier {
+    use std::sync::Mutex;
+    type Hook = Box<dyn FnOnce() + Send>;
+    static HOOK: Mutex<Option<Hook>> = Mutex::new(None);
+    #[cfg(feature = "headless")]
+    pub(crate) fn set(hook: Hook) {
+        *HOOK.lock().unwrap() = Some(hook);
+    }
+    pub(super) fn pass() {
+        let hook = HOOK.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
 }
 
 struct OperationAdmission {
     expected_project: Option<String>,
     goal: Option<task_controls::GoalLaunch>,
     team: Option<architect::Admission>,
+    authority: Option<orchestrator::Authority>,
 }
 
 async fn launch_operation_admitted(
@@ -1459,6 +1536,7 @@ async fn launch_operation_admitted(
         expected_project,
         goal,
         team: team_admission,
+        authority,
     } = admission;
     if state.shutdown.load(Ordering::SeqCst) != 0 {
         return Err("PandaCode is shutting down.".into());
@@ -1468,6 +1546,8 @@ async fn launch_operation_admitted(
     } else {
         None
     };
+    #[cfg(test)]
+    admission_barrier::pass();
     let goal_request = goal.as_ref().map(|g| g.request.clone());
     let goal_reply = Arc::new(Mutex::new(goal.map(|g| g.reply)));
     let image_ids = image_ids.unwrap_or_default();
@@ -1522,6 +1602,7 @@ async fn launch_operation_admitted(
             command,
             goal: goal_request,
             team: team_admission,
+            authority,
         },
     )?;
     let _ = app.emit("agent-event", event(&session_id, "status", "running"));
@@ -1970,6 +2051,27 @@ async fn launch_operation_admitted(
     });
     Ok(())
 }
+/// Stops a task's agent for an orchestrator, after re-checking `authority` under the store lock.
+pub(crate) fn stop_agent_as(app: &AppHandle, state: &AppState, session_id: &str, authority: &orchestrator::Authority) -> Result<bool> {
+    let is_team = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        architect::load(&store, session_id)?.is_some()
+    };
+    if is_team {
+        // Verified again under the team's own locks, where its agents are stopped.
+        let running = state.agents.lock().map_err(|e| e.to_string())?.contains_key(session_id);
+        architect::stop_team_as(app, state, session_id, authority)?;
+        return Ok(running);
+    }
+    let agents = state.agents.lock().map_err(|e| e.to_string())?;
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    authority.check(&store.session(session_id)?)?;
+    match agents.get(session_id) {
+        Some(tx) => tx.send(RunInput::Stop).map(|_| true).map_err(|_| "Agent has stopped.".to_string()),
+        None => Ok(false),
+    }
+}
+
 #[tauri::command]
 async fn stop_session(
     app: crate::AppHandle,
@@ -1999,7 +2101,7 @@ async fn stop_session(
 /// so webhooks can tell the user's actions from the orchestrator's.
 #[tauri::command]
 async fn respond_approval(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, request_id: String, approved: bool) -> Result<()> {
-    respond_approval_inner(state, session_id.clone(), request_id.clone(), approved).await?;
+    respond_approval_inner(state, session_id.clone(), request_id.clone(), approved, None).await?;
     orchestrator::hooks::notify(&app, &session_id, orchestrator::hooks::Event::HumanResponded { request_id, approved: Some(approved), answer: None });
     Ok(())
 }
@@ -2008,12 +2110,13 @@ pub(crate) async fn respond_approval_inner(
     session_id: String,
     request_id: String,
     approved: bool,
+    authority: Option<&orchestrator::Authority>,
 ) -> Result<()> {
     let agents = state.agents.lock().map_err(|e| e.to_string())?;
     let tx = agents
         .get(&session_id)
         .ok_or("This agent is no longer running.")?;
-    tx.respond_approval(&state.store, &session_id, request_id, approved)
+    tx.respond_approval_as(&state.store, &session_id, request_id, approved, authority)
 }
 #[tauri::command]
 async fn list_providers(force: Option<bool>) -> Vec<providers::ProviderInfo> {
@@ -2036,7 +2139,7 @@ async fn list_provider_models(provider: String, force: Option<bool>) -> Result<V
 #[tauri::command]
 async fn respond_user_input(app: crate::AppHandle, state: State<'_, AppState>, session_id: String, request_id: String, response: serde_json::Value) -> Result<()> {
     let answer = response.to_string();
-    respond_user_input_inner(state, session_id.clone(), request_id.clone(), response).await?;
+    respond_user_input_inner(state, session_id.clone(), request_id.clone(), response, None).await?;
     orchestrator::hooks::notify(&app, &session_id, orchestrator::hooks::Event::HumanResponded { request_id, approved: None, answer: Some(answer) });
     Ok(())
 }
@@ -2045,6 +2148,7 @@ pub(crate) async fn respond_user_input_inner(
     session_id: String,
     request_id: String,
     response: serde_json::Value,
+    authority: Option<&orchestrator::Authority>,
 ) -> Result<()> {
     if response.to_string().len() > 32 * 1024 {
         return Err("Response is too large.".into());
@@ -2063,6 +2167,11 @@ pub(crate) async fn respond_user_input_inner(
             .ok_or("This question belongs to an earlier run.")?
             .to_owned();
         let (tx, rx) = tokio::sync::oneshot::channel();
+        // Agents, approvals, then store (the order respond_approval uses); the store guard spans the send.
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        if let Some(authority) = authority {
+            authority.check(&store.session(&session_id)?)?;
+        }
         agent
             .send(RunInput::UserInput {
                 request_id: original_id,
